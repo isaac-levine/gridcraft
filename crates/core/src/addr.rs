@@ -230,9 +230,76 @@ impl fmt::Display for RangeRef {
     }
 }
 
+/// Whether `name` reads as an R1C1 reference: `R`, `C`, `RC`, `R1`, `C1`, `R1C`, `RC1`, `R1C1`
+/// in any case. Excel quotes such sheet names.
+fn is_r1c1_token(name: &str) -> bool {
+    let mut chars = name.chars().peekable();
+    let mut letters = 0;
+    for want in ['R', 'C'] {
+        if chars.peek().is_some_and(|c| c.eq_ignore_ascii_case(&want)) {
+            chars.next();
+            letters += 1;
+            while chars.peek().is_some_and(|c| c.is_ascii_digit()) {
+                chars.next();
+            }
+        }
+    }
+    letters > 0 && chars.next().is_none()
+}
+
+/// Whether a sheet name needs quotes in a reference, by Excel's rule: it starts with a digit or
+/// `.`, holds anything but letters, digits, `_` and `.`, reads as an A1 cell inside the sheet or
+/// as an R1C1 token, or is `TRUE` / `FALSE`.
+pub fn sheet_needs_quotes(name: &str) -> bool {
+    let Some(first) = name.chars().next() else {
+        return true;
+    };
+    if first.is_ascii_digit() || first == '.' || name.chars().any(|c| !(c.is_alphanumeric() || c == '_' || c == '.')) {
+        return true;
+    }
+    CellRef::parse(name).is_some() || is_r1c1_token(name) || name.eq_ignore_ascii_case("TRUE") || name.eq_ignore_ascii_case("FALSE")
+}
+
+/// The sheet name as it is written in a reference: quoted (with `'` doubled) when needed.
+pub fn quote_sheet(name: &str) -> String {
+    if sheet_needs_quotes(name) { format!("'{}'", name.replace('\'', "''")) } else { name.to_string() }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn sheet_name_quoting_follows_excel() {
+        for name in [
+            "A1",
+            "XFD1",
+            "AB1048576",
+            "R1",
+            "C1",
+            "RC1",
+            "R",
+            "C",
+            "RC",
+            "R1C",
+            "R1C1",
+            "r2c3",
+            ".x",
+            "TRUE",
+            "false",
+            "",
+            "1a",
+            "my sheet",
+            "Bob's",
+        ] {
+            assert!(sheet_needs_quotes(name), "{name:?} should be quoted");
+        }
+        for name in ["Sheet1", "XFE1", "AB1048577", "Ärger", "日本", "Σ", "Sheet.1", "_x", "A1A", "Rx", "RC1x", "Data"] {
+            assert!(!sheet_needs_quotes(name), "{name:?} should stay bare");
+        }
+        assert_eq!(quote_sheet("Bob's"), "'Bob''s'");
+        assert_eq!(quote_sheet("Sheet1"), "Sheet1");
+    }
 
     #[test]
     fn letters_roundtrip() {

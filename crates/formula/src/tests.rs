@@ -13,6 +13,13 @@ fn quoted_sheet_qualified_name_keeps_quotes() {
 }
 
 #[test]
+fn sheet_names_excel_quotes_keep_their_quotes() {
+    assert_eq!(rt("'.x'!A1+'R1C1'!A1"), "'.x'!A1+'R1C1'!A1");
+    assert_eq!(rt("'RC'!B2"), "'RC'!B2");
+    assert_eq!(rt("'XFE1'!B2"), "XFE1!B2");
+}
+
+#[test]
 fn intersection_with_deleted_operand_reparses() {
     // Deleting the columns of an intersection operand prints `A1:B2 #REF!`; that text must parse back.
     assert_eq!(rt("A1:B2 #REF!"), "A1:B2 #REF!");

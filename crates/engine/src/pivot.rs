@@ -57,14 +57,7 @@ fn split_sheet(r: &str) -> (Option<String>, &str) {
 
 /// Quotes a sheet name for a reference when needed.
 pub fn quote_sheet(name: &str) -> String {
-    if !name.is_empty()
-        && name.chars().all(|c| c.is_alphanumeric() || c == '_' || c == '.')
-        && !name.chars().next().is_some_and(|c| c.is_ascii_digit())
-    {
-        name.to_string()
-    } else {
-        format!("'{}'", name.replace('\'', "''"))
-    }
+    gridcraft_core::quote_sheet(name)
 }
 
 /// Absolute reference text for a range on a sheet: `Sheet1!$A$1:$E$20`.
@@ -1611,5 +1604,19 @@ mod fit_tests {
         assert!(!data_cols_exceed_sheet(64, false, 256));
         assert!(!data_cols_exceed_sheet(16_384, false, 0));
         assert!(data_cols_exceed_sheet(16_385, false, 0));
+    }
+}
+
+#[cfg(test)]
+mod quote_tests {
+    use super::*;
+
+    #[test]
+    fn pivot_source_quotes_sheet_names_like_excel() {
+        let r = RangeRef::new(CellRef::new(0, 0), CellRef::new(2, 1));
+        assert_eq!(range_text("A1", r), "'A1'!$A$1:$B$3");
+        assert_eq!(range_text("R1C1", r), "'R1C1'!$A$1:$B$3");
+        assert_eq!(range_text(".x", r), "'.x'!$A$1:$B$3");
+        assert_eq!(range_text("Data", r), "Data!$A$1:$B$3");
     }
 }

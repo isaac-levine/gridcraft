@@ -418,7 +418,11 @@ fn transpose(args: &[Arg], _c: &mut dyn Ctx) -> R<Value> {
 /// `'EXCEL SHEET'`).
 fn quote_sheet(s: &str) -> String {
     let word = |p: &str| p.chars().all(|c| c.is_alphanumeric() || c == '_' || c == '.');
-    let bare_sheet = |p: &str| !p.is_empty() && word(p) && !p.chars().next().is_some_and(|c| c.is_ascii_digit());
+    // Unlike formula text, ADDRESS leaves TRUE / FALSE bare.
+    let bare_sheet = |p: &str| {
+        let boolean = p.eq_ignore_ascii_case("TRUE") || p.eq_ignore_ascii_case("FALSE");
+        !p.is_empty() && word(p) && (boolean || !gridcraft_core::sheet_needs_quotes(p))
+    };
     let plain = match s.strip_prefix('[').and_then(|r| r.split_once(']')) {
         Some((book, sheet)) => !book.is_empty() && word(book) && bare_sheet(sheet),
         None => bare_sheet(s),
@@ -790,6 +794,12 @@ mod tests {
         ];
         for (r, c, abs, a1, sheet, want) in cases {
             is_text(ev("ADDRESS", vec![n(r), n(c), n(abs), b(a1), t(sheet)]), want);
+        }
+        // Sheet names Excel quotes: cells in range, R1C1 tokens, a leading dot. TRUE stays bare.
+        for (sheet, want) in
+            [("A1", "'A1'!$A$1"), ("R1C1", "'R1C1'!$A$1"), ("RC", "'RC'!$A$1"), (".x", "'.x'!$A$1"), ("XFE1", "XFE1!$A$1"), ("TRUE", "TRUE!$A$1")]
+        {
+            is_text(ev("ADDRESS", vec![n(1.0), n(1.0), n(1.0), b(true), t(sheet)]), want);
         }
         is_text(ev("ADDRESS", vec![n(1048576.0), n(16384.0)]), "$XFD$1048576");
         is_err(ev("ADDRESS", vec![n(0.0), n(1.0)]), CellError::Value);
