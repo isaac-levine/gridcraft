@@ -626,6 +626,50 @@ pub fn series_from_range(sh: &Sheet, r: RangeRef, by_rows: bool) -> Vec<Series> 
     out
 }
 
+/// The areas a chart is built from: the comma-separated `range` param, else a Ctrl-selected
+/// multi-area selection, else nothing (the caller falls back to `block`).
+fn chart_areas(s: &Session, p: &Json) -> Result<Vec<RangeRef>> {
+    let areas = if p.get("range").is_some() { target_ranges(s, p)? } else { s.doc()?.selection.ranges.clone() };
+    Ok(if areas.len() > 1 { areas } else { Vec::new() })
+}
+
+fn bounding(areas: &[RangeRef]) -> RangeRef {
+    let mut it = areas.iter();
+    let first = it.next().copied().unwrap_or_default();
+    it.fold(first, |a, b| {
+        RangeRef::new(
+            CellRef::new(a.start.row.min(b.start.row), a.start.col.min(b.start.col)),
+            CellRef::new(a.end.row.max(b.end.row), a.end.col.max(b.end.col)),
+        )
+    })
+}
+
+/// Series from a multi-area range laid out in columns of equal height. As in Excel, when the first
+/// area is a text column it holds the categories and every later area supplies series.
+fn series_from_areas(sh: &Sheet, areas: &[RangeRef]) -> Result<Vec<Series>> {
+    let h = areas.first().map(|a| a.height()).unwrap_or(0);
+    if areas.iter().any(|a| a.height() != h) {
+        return Err(EngineError::Other("The areas of a chart range must have the same number of rows.".into()));
+    }
+    let mut per_area: Vec<Vec<Series>> = areas.iter().map(|a| series_from_range(sh, *a, false)).collect();
+    let text_column = |a: &RangeRef| {
+        let top = a.start.row + (a.height() > 1) as u32;
+        a.width() == 1 && (top..=a.end.row).all(|row| sh.value(CellRef::new(row, a.start.col)).is_text())
+    };
+    let mut cats = None;
+    if per_area.len() > 1 && areas.first().is_some_and(text_column) {
+        let first = per_area.remove(0);
+        cats = first.into_iter().next().map(|se| se.values);
+    }
+    let mut out: Vec<Series> = per_area.into_iter().flatten().collect();
+    if let Some(c) = cats {
+        for se in out.iter_mut().filter(|se| se.categories.is_none()) {
+            se.categories = Some(c.clone());
+        }
+    }
+    Ok(out)
+}
+
 /// A scatter plot of a block without category labels takes its first column (or row) as the X
 /// values of the others, as Excel does: two plain columns make one series of points, not two (#428).
 pub fn scatter_x_from_first(kind: ChartKind, series: &mut Vec<Series>) {
@@ -706,8 +750,9 @@ pub fn recommend_charts(s: &Session, p: &Json) -> Result<Vec<(&'static str, &'st
 /// The chart `insert.chart` would insert for these params, without inserting it: the sheet it
 /// goes on and the chart (previews in the Recommended Charts dialog).
 pub fn build_chart(s: &Session, p: &Json) -> Result<(usize, Chart)> {
-    let r = block(s, p)?;
-    if r.count() > MAX_CHART_CELLS {
+    let areas = chart_areas(s, p)?;
+    let r = if areas.len() > 1 { bounding(&areas) } else { block(s, p)? };
+    if areas.iter().fold(0u64, |n, a| n.saturating_add(a.count())) > MAX_CHART_CELLS || r.count() > MAX_CHART_CELLS {
         return Err(bad("insert.chart", "range too large for a chart"));
     }
     let mut t = str_param(p, "type").unwrap_or("column").to_string();
@@ -725,7 +770,7 @@ pub fn build_chart(s: &Session, p: &Json) -> Result<(usize, Chart)> {
     let data_w = r.width();
     let by_rows = data_w > data_h + 1;
     let kind = chart_kind(&t, &sub);
-    let mut series = series_from_range(sh, r, by_rows);
+    let mut series = if areas.len() > 1 { series_from_areas(sh, &areas)? } else { series_from_range(sh, r, by_rows) };
     if series.is_empty() {
         return Err(EngineError::Other("Select data for the chart first.".into()));
     }

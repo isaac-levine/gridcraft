@@ -157,6 +157,28 @@ fn chart_category_axis_from_blank_corner_and_select_data() {
 }
 
 #[test]
+fn chart_from_multi_area_range_uses_every_area() {
+    // #1638: "A1:A5,E1:E5" is one series over E2:E5 with the month names as categories.
+    let mut s = s();
+    s.execute(
+        "range.setValues",
+        json!({"range": "A1", "values": [["Mes","x","y","z","Ventas"],["Ene",1,1,1,10],["Feb",1,1,1,20],["Mar",1,1,1,30],["Abr",1,1,1,40]]}),
+    )
+    .unwrap();
+    s.execute("insert.chart", json!({"range": "A1:A5,E1:E5", "type": "pie", "at": "G2"})).unwrap();
+    {
+        let d = s.doc().unwrap();
+        let c = d.wb.active().unwrap().charts.last().unwrap();
+        assert_eq!(c.series.len(), 1);
+        assert_eq!(c.series[0].values, "Sheet1!$E$2:$E$5");
+        assert_eq!(c.series[0].categories.as_deref(), Some("Sheet1!$A$2:$A$5"));
+        assert_eq!(c.series[0].name.as_deref(), Some("Sheet1!$E$1"));
+    }
+    // Areas of different heights can't be combined: an error, not a silent first-area chart.
+    assert!(s.execute("insert.chart", json!({"range": "A1:A5,E1:E3"})).is_err());
+}
+
+#[test]
 fn entry_and_text_paste_use_inherited_formats_and_cell_overrides() {
     let mut s = s();
     s.execute("home.bold", json!({"range": "B:B", "on": true})).unwrap();
