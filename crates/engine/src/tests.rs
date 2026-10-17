@@ -3282,3 +3282,24 @@ fn paste_special_validation_moves_relative_references() {
     assert!(!ok(&mut s, "C3", "5"), "the pasted rule checks C3, not A1");
     assert!(ok(&mut s, "C3", "20"));
 }
+
+#[test]
+fn reversed_category_axis_is_set_saved_and_read_back() {
+    let mut s = s();
+    s.execute("range.setValues", json!({"range": "A1", "values": [["", "Hours"], ["Plan", 4], ["Build", 9], ["Ship", 2]]})).unwrap();
+    s.execute("insert.chart", json!({"type": "bar", "range": "A1:B4"})).unwrap();
+    let chart = |s: &Session| s.doc().unwrap().wb.active().unwrap().charts[0].clone();
+    assert!(!chart(&s).x_reverse);
+    s.execute("chart.set", json!({"reverseCategories": true})).unwrap();
+    assert!(chart(&s).x_reverse);
+    let reopen = |s: &mut Session| {
+        let r = s.execute("file.saveBytes", json!({"format": "xlsx"})).unwrap();
+        let b64 = r["base64"].as_str().unwrap().to_string();
+        s.execute("file.open", json!({"name": "x.xlsx", "base64": b64})).unwrap();
+    };
+    reopen(&mut s);
+    assert!(chart(&s).x_reverse);
+    s.execute("chart.set", json!({"reverseCategories": false})).unwrap();
+    reopen(&mut s);
+    assert!(!chart(&s).x_reverse);
+}

@@ -1444,6 +1444,7 @@ fn insert_pivot_chart(s: &mut Session, p: &Json) -> Result<Json> {
         y_title: None,
         source: None,
         by_rows: false,
+        x_reverse: false,
         pivot: Some(link),
     };
     edit(s, |cx| {

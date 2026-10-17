@@ -391,6 +391,7 @@ fn sample() -> Workbook {
         y_title: Some("Amount".into()),
         source: None,
         by_rows: false,
+        x_reverse: false,
         pivot: None,
     };
     for kind in [

@@ -937,7 +937,12 @@ fn cartesian(ctx: &mut Ctx, chart: &Chart, data: &ChartData, area: Bx, horizonta
         .map(|(_, s)| max_forward(s))
         .fold(0.0, f64::max);
     let ncat_slots = ncat.saturating_add(fwd.ceil() as usize).min(MAX_CATS.max(ncat));
-    let labels: Vec<String> = (0..ncat_slots).map(|j| if j < ncat { cat_label(data, j) } else { String::new() }).collect();
+    // Reversed categories are drawn from the far end, so the labels and slots flip together.
+    let slot_of_cat = |j: usize| if chart.x_reverse { ncat_slots - 1 - j } else { j };
+    let labels: Vec<String> = (0..ncat_slots)
+        .map(|s| if chart.x_reverse { ncat_slots - 1 - s } else { s })
+        .map(|j| if j < ncat { cat_label(data, j) } else { String::new() })
+        .collect();
     let plot = frame(ctx, area, CatAxis::Labels(&labels), &y1, y2.as_ref(), horizontal, chart.gridlines);
     if !plot.ok() {
         return;
@@ -945,7 +950,10 @@ fn cartesian(ctx: &mut Ctx, chart: &Chart, data: &ChartData, area: Bx, horizonta
     let scale_of = |i: usize| -> Scale { if sec.get(i).copied().unwrap_or(false) { y2.as_ref().map(|a| a.scale).unwrap_or(*s1) } else { *s1 } };
     let cat_len = if horizontal { plot.h } else { plot.w };
     let cw = cat_len / ncat_slots as f32;
-    let center = |j: usize| if horizontal { plot.bottom() - (j as f32 + 0.5) * cw } else { plot.x + (j as f32 + 0.5) * cw };
+    let center = |j: usize| {
+        let j = slot_of_cat(j);
+        if horizontal { plot.bottom() - (j as f32 + 0.5) * cw } else { plot.x + (j as f32 + 0.5) * cw }
+    };
     let vpos = |v: f64, sc: &Scale| if horizontal { plot.x + sc.frac(v) * plot.w } else { plot.bottom() - sc.frac(v) * plot.h };
 
     // Column slots: each clustered series gets one, each stack group shares one.
@@ -1094,7 +1102,10 @@ fn cartesian(ctx: &mut Ctx, chart: &Chart, data: &ChartData, area: Bx, horizonta
         }
         let sc = scale_of(i);
         let pts: Vec<(f64, f64)> = s.values.iter().take(ncat).enumerate().filter_map(|(j, v)| v.map(|v| ((j + 1) as f64, v))).collect();
-        let frac = |x: f64, y: f64| ((x - 0.5) / ncat_slots as f64, (y - sc.min) / (sc.max - sc.min));
+        let frac = |x: f64, y: f64| {
+            let fx = (x - 0.5) / ncat_slots as f64;
+            (if chart.x_reverse { 1.0 - fx } else { fx }, (y - sc.min) / (sc.max - sc.min))
+        };
         let px = |(fx, fy): (f64, f64)| {
             if horizontal {
                 [plot.x + fy as f32 * plot.w, plot.bottom() - fx as f32 * plot.h]

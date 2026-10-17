@@ -48,6 +48,7 @@ fn chart(kind: ChartKind) -> Chart {
         y_title: Some("Revenue".into()),
         source: None,
         by_rows: false,
+        x_reverse: false,
         pivot: None,
     }
 }
@@ -1056,4 +1057,50 @@ fn area_charts_draw_source_value_labels_only_when_enabled() {
         let first_label = on.iter().position(|p| matches!(p, Prim::Text { text, .. } if text == "$12,000"));
         assert!(first_label > last_poly, "{kind:?}: label drawn under a later area");
     }
+}
+
+fn label_y(prims: &[Prim], label: &str) -> f32 {
+    prims
+        .iter()
+        .find_map(|p| match p {
+            Prim::Text { text, y, x, .. } if text == label && *x < 120.0 => Some(*y),
+            _ => None,
+        })
+        .unwrap_or(f32::NAN)
+}
+
+#[test]
+fn reversed_categories_flip_bar_and_column_charts() {
+    let mut c = chart(ChartKind::BarClustered);
+    c.data_labels = false;
+    let d = sample(ChartKind::BarClustered);
+    let plain = render(&c, &d, 640.0, 400.0, &ApproxMeasure);
+    assert!(label_y(&plain, "Q1") > label_y(&plain, "Q6"), "first category is at the bottom by default");
+    c.x_reverse = true;
+    let flipped = render(&c, &d, 640.0, 400.0, &ApproxMeasure);
+    assert!(label_y(&flipped, "Q1") < label_y(&flipped, "Q6"), "first category moves to the top");
+    // The East bar of Q1 sits where the Q1 label is.
+    let east = d.series[1].color;
+    let bar_y = flipped.iter().find_map(|p| match p {
+        Prim::Rect { y, h, fill: Some(f), .. } if *f == east && *y < 340.0 => Some(y + h / 2.0),
+        _ => None,
+    });
+    let bar_y = bar_y.unwrap_or(f32::NAN);
+    assert!((bar_y - label_y(&flipped, "Q1")).abs() < 12.0, "{bar_y} vs {}", label_y(&flipped, "Q1"));
+    assert_sane(&flipped, 640.0, 400.0);
+
+    let mut c = chart(ChartKind::ColumnClustered);
+    c.data_labels = false;
+    let x_of = |prims: &[Prim], label: &str| {
+        prims.iter().find_map(|p| match p {
+            Prim::Text { text, x, y, .. } if text == label && *y > 300.0 => Some(*x),
+            _ => None,
+        })
+    };
+    let d = sample(ChartKind::ColumnClustered);
+    let plain = render(&c, &d, 640.0, 400.0, &ApproxMeasure);
+    assert!(x_of(&plain, "Q1") < x_of(&plain, "Q6"));
+    c.x_reverse = true;
+    let flipped = render(&c, &d, 640.0, 400.0, &ApproxMeasure);
+    assert!(x_of(&flipped, "Q1") > x_of(&flipped, "Q6"));
 }

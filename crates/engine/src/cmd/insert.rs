@@ -90,7 +90,7 @@ pub fn specs() -> Vec<CommandSpec> {
             "Chart Properties",
             ["Chart Design"],
             None,
-            "{chart?: id, type?, title?, legend?: none|bottom|top|left|right, dataLabels?, gridlines?, style?, xTitle?, yTitle?, at?, width?, height?, dx?, dy?}",
+            "{chart?: id, type?, title?, legend?: none|bottom|top|left|right, dataLabels?, gridlines?, style?, xTitle?, yTitle?, reverseCategories?, at?, width?, height?, dx?, dy?}",
             has_doc,
             chart_set
         ),
@@ -760,6 +760,7 @@ pub fn build_chart(s: &Session, p: &Json) -> Result<(usize, Chart)> {
         y_title: None,
         source: Some(format!("{}!{}", gridcraft_formula::quote_sheet(&sh.name), r.a1())),
         by_rows,
+        x_reverse: false,
         pivot: None,
     };
     Ok((sheet, chart))
@@ -820,6 +821,9 @@ fn chart_set(s: &mut Session, p: &Json) -> Result<Json> {
         }
         if let Some(t) = p.get("yTitle") {
             c.y_title = t.as_str().map(str::to_string);
+        }
+        if let Some(v) = bool_param(p, "reverseCategories") {
+            c.x_reverse = v;
         }
         if let Some(at) = at {
             c.anchor.cell = at;
