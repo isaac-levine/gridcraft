@@ -34,6 +34,7 @@ fn smooth_line_setting_round_trips() {
         y_title: None,
         source: None,
         by_rows: false,
+        x_reverse: false,
         pivot: None,
     });
     let mut smooth_series = base_series.clone();
@@ -52,6 +53,7 @@ fn smooth_line_setting_round_trips() {
         y_title: None,
         source: None,
         by_rows: false,
+        x_reverse: false,
         pivot: None,
     });
     wb.sheets = vec![Arc::new(s)];
