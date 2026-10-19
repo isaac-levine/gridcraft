@@ -226,6 +226,10 @@ fn literals_and_fill() {
     assert_eq!(f("\"$\"#,##0.00", 3.0), "$3.00");
     assert_eq!(f("$#,##0.00", -3.0), "-$3.00");
     assert_eq!(f("[$€-407]#,##0.00", 1234.5), "€1,234.50");
+    // Honduran lempira, Spanish (Honduras) locale: symbol or ISO code, point decimals, comma groups.
+    assert_eq!(f("[$L-480A]#,##0.00", 1234.5), "L1,234.50");
+    assert_eq!(f("[$L-480A] #,##0.00", 1234.5), "L 1,234.50");
+    assert_eq!(f("[$HNL-480A] #,##0.00", -1234.5), "-HNL 1,234.50");
     assert_eq!(f("0\" units\"", 5.0), "5 units");
     assert_eq!(f("\\A0", 5.0), "A5");
     assert_eq!(f("(0)", 5.0), "(5)");
