@@ -141,6 +141,8 @@ pub(crate) fn input_to_cell(input: &str, sheet: usize, at: CellRef, wb: &mut gri
         // Excel closes missing parentheses for you.
         let mut text = body.to_string();
         let mut parsed = gridcraft_formula::parse(&text);
+        // Keep the error for what was typed: after appended `)` it would blame a paren the user never typed.
+        let typed_err = parsed.as_ref().err().cloned();
         for _ in 0..8 {
             if parsed.is_ok() {
                 break;
@@ -148,7 +150,10 @@ pub(crate) fn input_to_cell(input: &str, sheet: usize, at: CellRef, wb: &mut gri
             text.push(')');
             parsed = gridcraft_formula::parse(&text);
         }
-        let expr = parsed.map_err(|e| EngineError::Other(format!("There's a problem with this formula: {e}")))?;
+        let expr = match parsed {
+            Ok(e) => e,
+            Err(e) => return Err(EngineError::Other(format!("There's a problem with this formula: {}", typed_err.unwrap_or(e)))),
+        };
         let expr = wb.name_call_case(expr);
         check_arg_counts(&expr)?;
         let mut cell = Cell::formula(Formula::from_expr(expr));
@@ -1631,6 +1636,17 @@ mod tests {
         assert_eq!(get(&mut s, "A3")["value"], json!(true));
         assert_eq!(get(&mut s, "A4")["value"], json!(200.5));
         assert!(s.execute("cell.set", json!({"cell": "A5"})).is_err());
+    }
+
+    #[test]
+    fn incomplete_formula_error_does_not_blame_an_untyped_paren() {
+        // #2030: the error came from the retry with appended `)`, so it named a paren nobody typed.
+        let mut s = Session::new();
+        s.new_workbook();
+        let err = s.execute("cell.set", json!({"cell": "A1", "input": "=1+"})).unwrap_err().to_string();
+        assert!(!err.contains("`)`"), "{err}");
+        assert!(err.contains("end of formula"), "{err}");
+        s.execute("cell.set", json!({"cell": "A2", "input": "=SUM(1,2"})).unwrap();
     }
 
     #[test]

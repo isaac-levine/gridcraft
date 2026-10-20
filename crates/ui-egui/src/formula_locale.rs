@@ -29,6 +29,8 @@ pub(crate) fn canonical(
         // Match the engine's existing convenience for missing closing parentheses.
         let mut body = body.to_string();
         let mut expr = formula::parse_input(&body, locale, known);
+        // Report the error for what was typed, not for the text with appended `)`.
+        let typed_err = expr.as_ref().err().cloned();
         for _ in 0..8 {
             if expr.is_ok() {
                 break;
@@ -36,7 +38,10 @@ pub(crate) fn canonical(
             body.push(')');
             expr = formula::parse_input(&body, locale, known);
         }
-        return Ok(format!("={}", formula::print(&expr?)));
+        return match (expr, typed_err) {
+            (Ok(e), _) => Ok(format!("={}", formula::print(&e))),
+            (Err(e), typed) => Err(typed.unwrap_or(e)),
+        };
     }
     // Decimal-comma number entry follows the same preference, without rewriting text or dates.
     let normalized = body.trim().replace(locale.decimal_separator(), ".");
