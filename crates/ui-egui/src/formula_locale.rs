@@ -9,6 +9,14 @@ pub(crate) fn canonical(
     sheet: usize,
     cell: gridcraft_engine::core::CellRef,
 ) -> Result<String, ParseError> {
+    // The editor hid the `_xludf.` prefixes of this cell's formula; confirming it unchanged keeps
+    // the user-defined calls instead of binding them to the built-ins of the same name.
+    if let Some(stored) = wb.sheet(sheet).and_then(|sh| sh.cell(cell)).filter(|c| c.formula.is_some()).map(|c| c.input_text())
+        && has_udf_prefix(&stored)
+        && text == display(&stored, locale, wb, sheet)
+    {
+        return Ok(stored);
+    }
     if locale == FormulaLocale::En || wb.sheet(sheet).is_some_and(|sh| wb.styles.get(sh.style_id(cell)).num_fmt.as_str() == "@") {
         return Ok(text.to_string());
     }
@@ -21,6 +29,8 @@ pub(crate) fn canonical(
         // Match the engine's existing convenience for missing closing parentheses.
         let mut body = body.to_string();
         let mut expr = formula::parse_input(&body, locale, known);
+        // Report the error for what was typed, not for the text with appended `)`.
+        let typed_err = expr.as_ref().err().cloned();
         for _ in 0..8 {
             if expr.is_ok() {
                 break;
@@ -28,7 +38,10 @@ pub(crate) fn canonical(
             body.push(')');
             expr = formula::parse_input(&body, locale, known);
         }
-        return Ok(format!("={}", formula::print(&expr?)));
+        return match (expr, typed_err) {
+            (Ok(e), _) => Ok(format!("={}", formula::print(&e))),
+            (Err(e), typed) => Err(typed.unwrap_or(e)),
+        };
     }
     // Decimal-comma number entry follows the same preference, without rewriting text or dates.
     let normalized = body.trim().replace(locale.decimal_separator(), ".");
@@ -40,16 +53,42 @@ pub(crate) fn canonical(
 }
 
 pub(crate) fn display(text: &str, locale: FormulaLocale, wb: &Workbook, sheet: usize) -> String {
-    // English (and every language without a formula table) shows the stored text untouched,
-    // and skips a parse per frame.
+    // English (and every language without a formula table) shows the stored text, `_xludf.`
+    // prefixes aside, and skips a parse per frame.
     if locale == FormulaLocale::En {
-        return text.to_string();
+        return hide_udf_prefix(text, locale);
     }
     let Some(body) = text.strip_prefix('=') else { return text.to_string() };
-    formula::parse(body)
+    let shown = formula::parse(body)
         .and_then(|expr| formula::print_input(&expr, locale, |name| wb.name(name, sheet).is_some() || wb.table(name).is_some()))
         .map(|body| format!("={body}"))
-        .unwrap_or_else(|_| text.to_string())
+        .unwrap_or_else(|_| text.to_string());
+    hide_udf_prefix(&shown, locale)
+}
+
+const UDF_PREFIX: &str = "_xludf.";
+
+fn has_udf_prefix(text: &str) -> bool {
+    text.to_ascii_lowercase().contains(UDF_PREFIX)
+}
+
+/// Excel shows a user-defined call such as `_xludf.EOMONTH()` as `=EOMONTH()`. Only function
+/// names lose the prefix: text literals and names keep it.
+fn hide_udf_prefix(text: &str, locale: FormulaLocale) -> String {
+    let Some(body) = text.strip_prefix('=').filter(|b| has_udf_prefix(b)) else { return text.to_string() };
+    let Ok(tokens) = formula::lexer::tokenize_locale(body, locale) else { return text.to_string() };
+    let mut out = String::from("=");
+    let mut from = 0;
+    for t in tokens {
+        if matches!(t.tok, formula::lexer::Tok::Func(_))
+            && body.get(t.start..t.start + UDF_PREFIX.len()).is_some_and(|p| p.eq_ignore_ascii_case(UDF_PREFIX))
+        {
+            out.push_str(body.get(from..t.start).unwrap_or(""));
+            from = t.start + UDF_PREFIX.len();
+        }
+    }
+    out.push_str(body.get(from..).unwrap_or(""));
+    out
 }
 
 // Descriptions/signatures for the supported Spanish function table; untranslated functions
