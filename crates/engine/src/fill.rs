@@ -19,6 +19,7 @@ pub enum FillMode {
     Alternate,
     Copy,
     Formats,
+    /// Fill Without Formatting: extends the series like a plain drag but keeps the target's styles.
     ValuesOnly,
 }
 
@@ -67,7 +68,7 @@ pub fn fill(cx: &mut Ctx, sheet: usize, src: RangeRef, target: RangeRef, mode: F
             cols.into_iter().map(|c| CellRef::new(lane, c)).collect()
         };
         let fmt = |c: &(CellRef, Option<Cell>)| cx.wb.styles.get(c.1.as_ref().map(|c| c.style).unwrap_or_default()).num_fmt.as_str();
-        let pattern = if matches!(mode, FillMode::Series | FillMode::Alternate) {
+        let pattern = if matches!(mode, FillMode::Series | FillMode::Alternate | FillMode::ValuesOnly) {
             let detected = Pattern::detect(&src_cells, &custom, cx.wb.date_system, src_cells.first().map(fmt).unwrap_or_default());
             if mode == FillMode::Alternate { detected.alternate(&src_cells) } else { detected }
         } else {
@@ -75,11 +76,12 @@ pub fn fill(cx: &mut Ctx, sheet: usize, src: RangeRef, target: RangeRef, mode: F
         };
         // A source with no common pattern (`Product 1`, `On backorder`): each cell continues its
         // own series, one step per repeat of the source.
-        let per_cell: Vec<Pattern> = if mode == FillMode::Series && matches!(pattern, Pattern::Copy) && src_cells.len() > 1 {
-            src_cells.iter().map(|c| Pattern::detect(std::slice::from_ref(c), &custom, cx.wb.date_system, fmt(c))).collect()
-        } else {
-            Vec::new()
-        };
+        let per_cell: Vec<Pattern> =
+            if matches!(mode, FillMode::Series | FillMode::ValuesOnly) && matches!(pattern, Pattern::Copy) && src_cells.len() > 1 {
+                src_cells.iter().map(|c| Pattern::detect(std::slice::from_ref(c), &custom, cx.wb.date_system, fmt(c))).collect()
+            } else {
+                Vec::new()
+            };
         for (k, t) in targets.iter().enumerate() {
             let step = k as i64 + 1;
             let idx = k % src_cells.len().max(1);
@@ -611,6 +613,20 @@ mod tests {
         assert_eq!(p.apply("alan turing").as_deref(), Some("AT"));
         let p = learn(&[("alice@example.com".into(), "alice".into())]).unwrap();
         assert_eq!(p.apply("bob@example.com").as_deref(), Some("bob"));
+    }
+
+    #[test]
+    fn fill_without_formatting_extends_the_series() {
+        let mut s = crate::Session::new();
+        s.new_workbook();
+        s.execute("range.setValues", serde_json::json!({"range": "A1", "values": [[1], [2]]})).unwrap();
+        s.execute("home.bold", serde_json::json!({"range": "A1:A2"})).unwrap();
+        s.execute("edit.autoFill", serde_json::json!({"source": "A1:A2", "target": "A1:A5", "mode": "values"})).unwrap();
+        let wb = &s.active().unwrap().wb;
+        let sheet = wb.active().unwrap();
+        let at = |c: &str| gridcraft_core::CellRef::parse(c).unwrap();
+        assert_eq!(sheet.value(at("A5")), Value::Number(5.0));
+        assert!(!wb.styles.get(sheet.style_id(at("A5"))).font.bold);
     }
 
     #[test]

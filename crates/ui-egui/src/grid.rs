@@ -100,8 +100,33 @@ pub enum Drag {
     },
 }
 
+/// The Auto Fill Options button left after a fill drag: what was filled and how, so the fill can be
+/// redone as a copy, a series, formats only or values only.
+#[derive(Clone, Debug, PartialEq)]
+pub struct FillOptions {
+    pub source: RangeRef,
+    pub target: RangeRef,
+    pub mode: &'static str,
+    pub open: bool,
+    /// Undo depth right after the fill: any other edit makes the button stale.
+    pub undo_len: usize,
+}
+
+/// The choices of the Auto Fill Options menu: label and `edit.autoFill` mode.
+pub const FILL_OPTION_MODES: [(&str, &str); 4] =
+    [("Copy Cells", "copy"), ("Fill Series", "series"), ("Fill Formatting Only", "formats"), ("Fill Without Formatting", "values")];
+
+/// Undoes the last fill and does it again in `mode`, keeping the filled range selected.
+pub fn refill(session: &mut gridcraft_engine::Session, opts: &FillOptions, mode: &str) -> Result<(), String> {
+    session.execute("edit.undo", json!({})).map_err(|e| e.to_string())?;
+    session.execute("edit.autoFill", json!({"source": opts.source.a1(), "target": opts.target.a1(), "mode": mode})).map_err(|e| e.to_string())?;
+    session.execute("selection.set", json!({"range": opts.target.a1()})).map_err(|e| e.to_string())?;
+    Ok(())
+}
+
 #[derive(Default)]
 pub struct GridState {
+    pub fill_options: Option<FillOptions>,
     pub drag: Drag,
     pub ensure_visible: bool,
     /// With `ensure_visible`: scroll to the moving end of the selection instead of the active cell
@@ -788,6 +813,7 @@ pub fn show(app: &mut SheetApp, ui: &mut egui::Ui) {
     }
     filter_menu(app, ui, &geo, previous_popups.0 == app.grid.filter_menu);
     list_picker(app, ui, &geo, previous_popups.1 == app.grid.list_picker);
+    fill_options(app, ui, &geo);
     header_menu(app, ui, previous_popups.2 == app.grid.header_menu);
     context_menu(app, ui);
     let track_x = if rtl { (available.left(), rect.left()) } else { (rect.right(), available.right()) };
@@ -2299,8 +2325,12 @@ fn interact(app: &mut SheetApp, ui: &mut egui::Ui, resp: &egui::Response, geo: &
                 if t != src {
                     // Ctrl (Cmd on macOS) swaps copying and extending, as in Excel.
                     let mode = if mods.command { "alternate" } else { "series" };
-                    if let Err(e) = app.run("edit.autoFill", json!({"source": src.a1(), "target": t.a1(), "mode": mode})) {
-                        app.message = Some(("GridCraft".into(), crate::clean_error(&e)));
+                    match app.run("edit.autoFill", json!({"source": src.a1(), "target": t.a1(), "mode": mode})) {
+                        Ok(_) => {
+                            let undo_len = app.session.active().map_or(0, |d| d.undo.len());
+                            app.grid.fill_options = Some(FillOptions { source: src, target: t, mode, open: false, undo_len });
+                        }
+                        Err(e) => app.message = Some(("GridCraft".into(), crate::clean_error(&e))),
                     }
                 }
             }
@@ -3113,6 +3143,47 @@ pub(crate) fn paint_overlays(
         }
     }
     let _ = (wb, si);
+}
+
+/// The Auto Fill Options button at the corner of what a fill drag just filled. It goes as soon as
+/// the selection moves elsewhere or the workbook changes under it.
+fn fill_options(app: &mut SheetApp, ui: &mut egui::Ui, geo: &Geo) {
+    let Some(opts) = app.grid.fill_options.clone() else { return };
+    let Some(d) = app.session.active() else { return };
+    if d.selection.current() != opts.target || d.undo.len() != opts.undo_len {
+        app.grid.fill_options = None;
+        return;
+    }
+    let wb = d.wb.clone();
+    let Some(sh) = wb.sheet(wb.active_sheet) else { return };
+    let corner = geo.mirror_pos(geo.range_rect(sh, opts.target).right_bottom());
+    let mut chosen = None;
+    let mut toggle = false;
+    egui::Area::new(egui::Id::new("fill_options")).fixed_pos(corner + vec2(4.0, 4.0)).order(egui::Order::Foreground).show(ui.ctx(), |ui| {
+        if ui.add(egui::Button::new("▾").min_size(vec2(20.0, 20.0))).on_hover_text("Auto Fill Options").clicked() {
+            toggle = true;
+        }
+        if opts.open {
+            egui::Frame::popup(ui.style()).show(ui, |ui| {
+                for (label, mode) in FILL_OPTION_MODES {
+                    if ui.selectable_label(opts.mode == mode, label).clicked() {
+                        chosen = Some(mode);
+                    }
+                }
+            });
+        }
+    });
+    if let Some(mode) = chosen {
+        match refill(&mut app.session, &opts, mode) {
+            Ok(()) => app.grid.fill_options = Some(FillOptions { mode, open: false, ..opts }),
+            Err(e) => {
+                app.grid.fill_options = None;
+                app.message = Some(("GridCraft".into(), crate::clean_error(&e)));
+            }
+        }
+    } else if toggle || (opts.open && ui.input(|i| i.key_pressed(egui::Key::Escape))) {
+        app.grid.fill_options = Some(FillOptions { open: toggle && !opts.open, ..opts });
+    }
 }
 
 fn list_picker(app: &mut SheetApp, ui: &mut egui::Ui, geo: &Geo, was_open: bool) {
