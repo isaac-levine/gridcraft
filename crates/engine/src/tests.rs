@@ -2597,6 +2597,24 @@ fn a_spill_that_goes_away_unblocks_another() {
     assert_eq!((v(&s, "E10"), v(&s, "G10")), (Value::Number(1.0), Value::Number(3.0)));
 }
 
+/// Issue #2340: the cells a cleared (or overwritten) anchor spilled over were freed, so an
+/// array above and to the left of them that they blocked must spill without Calculate Now.
+#[test]
+fn clearing_a_blocking_anchor_unblocks_an_array_above_its_spill() {
+    for clear in [false, true] {
+        let mut s = s();
+        s.execute("cell.set", json!({"cell": "C14", "input": "=SEQUENCE(1,7)"})).unwrap();
+        s.execute("cell.set", json!({"cell": "F13", "input": "=SEQUENCE(5,2)"})).unwrap();
+        assert_eq!(v(&s, "F13"), Value::Error(gridcraft_core::CellError::Spill));
+        if clear {
+            s.execute("edit.clearContents", json!({"range": "C14"})).unwrap();
+        } else {
+            s.execute("cell.set", json!({"cell": "C14", "input": "5"})).unwrap();
+        }
+        assert_eq!((v(&s, "F13"), v(&s, "G17")), (Value::Number(1.0), Value::Number(10.0)), "clear: {clear}");
+    }
+}
+
 #[test]
 fn an_array_reading_another_arrays_spill_is_updated() {
     // G5 is evaluated before D11 in the same pass, so it first reads D11's old spill.
