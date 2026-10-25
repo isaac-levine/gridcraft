@@ -2775,6 +2775,32 @@ fn checkboxes_keep_values_toggle_and_delete_in_two_passes() {
     assert_ne!(fmt_of(&s, "B2"), "checkbox");
 }
 
+/// Clear Formats and Clear All take conditional formats off the selected cells only (#2536).
+#[test]
+fn clear_formats_removes_conditional_formats_from_the_selection() {
+    let rules = |s: &Session| -> Vec<String> {
+        s.doc().unwrap().wb.sheet(0).unwrap().cond_formats.iter().flat_map(|c| c.ranges.iter().map(|r| r.a1())).collect()
+    };
+    let sorted = |s: &Session| {
+        let mut v = rules(s);
+        v.sort();
+        v
+    };
+    let mut s = s();
+    s.execute("range.setValues", json!({"range": "A1", "values": [[1], [2], [3], [4]]})).unwrap();
+    s.execute("home.conditionalFormat", json!({"range": "A1:A4", "rule": {"type": "colorScale"}})).unwrap();
+    assert_eq!(rules(&s), ["A1:A4"]);
+    s.execute("edit.clearFormats", json!({"range": "A2:A3"})).unwrap();
+    assert_eq!(sorted(&s), ["A1", "A4"]);
+    s.execute("edit.clearAll", json!({"range": "A1"})).unwrap();
+    assert_eq!(rules(&s), ["A4"]);
+    // A rule over empty cells goes too.
+    s.execute("edit.clearFormats", json!({"range": "A4:B9"})).unwrap();
+    assert!(rules(&s).is_empty());
+    s.execute("edit.undo", json!({})).unwrap();
+    assert_eq!(rules(&s), ["A4"]);
+}
+
 #[test]
 fn checkboxes_survive_xlsx_as_cell_controls() {
     let mut s = s();

@@ -1539,6 +1539,11 @@ fn clear(s: &mut Session, p: &Json, what: &str) -> Result<Json> {
                 }
             }
         }
+        if matches!(what, "all" | "formats") {
+            // Rules can cover empty cells, so cut them by the selection, not the used range.
+            let sh = cx.sheet_mut(sheet)?;
+            super::data::remove_cf_cells(&mut sh.cond_formats, &ranges);
+        }
         Ok(Json::Null)
     })
 }
