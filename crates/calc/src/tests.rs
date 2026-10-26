@@ -2274,3 +2274,25 @@ fn loan_schedule_residue_keeps_excels_sign() {
     }
     assert_eq!(t.get("P7"), Value::Text("".into()));
 }
+
+#[test]
+fn concat_stops_at_excels_cell_text_limit() {
+    let mut t = T::new();
+    // Exactly the limit is kept, one more is cut, and nothing errors (Excel cuts silently).
+    t.set("A1", "=REPT(\"x\",32766)&\"y\"");
+    t.set("A2", "=REPT(\"x\",32766)&\"yz\"");
+    t.set("A3", "=REPT(\"x\",20000)&REPT(\"x\",20000)");
+    t.set("B1", "=LEN(A1)");
+    t.set("B2", "=LEN(A2)");
+    t.set("B3", "=LEN(A3)");
+    assert_eq!((t.num("B1"), t.num("B2"), t.num("B3")), (32767.0, 32767.0, 32767.0));
+    assert_eq!(t.get("A2"), t.get("A1"));
+    // A character outside the Basic Multilingual Plane is two units and is never split.
+    t.set("C1", "=REPT(\"x\",32766)&\"\u{1F600}\"");
+    t.set("C2", "=REPT(\"x\",32765)&\"\u{1F600}\"");
+    let units = |at: &str| match t.get(at) {
+        Value::Text(s) => s.encode_utf16().count(),
+        v => panic!("{at} = {v:?}"),
+    };
+    assert_eq!((units("C1"), units("C2")), (32766, 32767));
+}

@@ -1873,11 +1873,9 @@ fn binary_scalar(op: BinOp, a: &Value, b: &Value, sys: gridcraft_core::DateSyste
         }),
         BinOp::Concat => match (a.to_text(), b.to_text()) {
             (Ok(x), Ok(y)) => {
-                if x.len() + y.len() > 32767 * 4 {
-                    Value::Error(CellError::Value)
-                } else {
-                    Value::text(x + &y)
-                }
+                let mut joined = x;
+                joined.push_str(&y);
+                Value::text(cut_to_cell_limit(joined))
             }
             (Err(e), _) | (_, Err(e)) => Value::Error(e),
         },
@@ -1889,6 +1887,28 @@ fn binary_scalar(op: BinOp, a: &Value, b: &Value, sys: gridcraft_core::DateSyste
         BinOp::Ge => Value::Bool(compare(a, b) != Less),
         BinOp::Range | BinOp::Union | BinOp::Intersect => Value::Error(CellError::Value),
     }
+}
+
+/// Excel's longest cell text, in UTF-16 units like `LEN` counts them.
+const MAX_CELL_TEXT_UNITS: usize = 32_767;
+
+/// `&` never makes a cell longer than Excel allows: past the limit Excel cuts the result and shows
+/// no error, and a longer cell makes the saved `.xlsx` unopenable. A character that would straddle
+/// the limit is dropped whole.
+fn cut_to_cell_limit(mut s: String) -> String {
+    // Every char is at least one UTF-16 unit, so a string this short cannot be over the limit.
+    if s.len() <= MAX_CELL_TEXT_UNITS {
+        return s;
+    }
+    let mut units = 0;
+    for (i, ch) in s.char_indices() {
+        units += ch.len_utf16();
+        if units > MAX_CELL_TEXT_UNITS {
+            s.truncate(i);
+            break;
+        }
+    }
+    s
 }
 
 /// SUMIF and AVERAGEIF with a sum range: Excel sizes the sum range like the criteria range.
