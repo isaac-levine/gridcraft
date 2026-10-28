@@ -233,6 +233,19 @@ fn icon() -> Option<egui::IconData> {
     Some(egui::IconData { width: img.width(), height: img.height(), rgba: img.into_raw() })
 }
 
+/// `--help` and `-h` print the usage and exit. Without this they were taken for file names and
+/// opened an empty window (#2826).
+fn wants_help(args: &[String]) -> bool {
+    args.iter().any(|a| a == "--help" || a == "-h")
+}
+
+fn usage() -> String {
+    format!(
+        "GridCraft {}\n\nUsage: gridcraft [OPTIONS] [FILE]...\n\nOptions:\n  --sample [NAME]        Open a sample workbook (default: sales)\n  --control PORT         Serve the JSON-lines control channel on 127.0.0.1:PORT\n  --control-token TOKEN  Token the control channel requires\n  -V, --version          Print the version and exit\n  -h, --help             Print this help and exit",
+        env!("CARGO_PKG_VERSION")
+    )
+}
+
 fn main() -> eframe::Result<()> {
     // First, so the panic hook and every start-up warning are recorded (`logging`).
     let logger = logging::install();
@@ -265,6 +278,10 @@ fn main() -> eframe::Result<()> {
     }
     if args.iter().any(|a| a == "--version" || a == "-V") {
         println!("GridCraft {}", env!("CARGO_PKG_VERSION"));
+        return Ok(());
+    }
+    if wants_help(&args) {
+        println!("{}", usage());
         return Ok(());
     }
     let mut control_port: Option<u16> = std::env::var("GRIDCRAFT_CONTROL_PORT").ok().and_then(|p| p.parse().ok());
@@ -442,6 +459,31 @@ mod packaging_tests {
         assert_eq!(mac, win);
         for ext in &mac {
             assert!(FileKind::from_path(&format!("book.{ext}")).is_some(), "GridCraft doesn't open .{ext}");
+        }
+    }
+}
+
+#[cfg(test)]
+mod help_tests {
+    use super::{usage, wants_help};
+
+    fn args(a: &[&str]) -> Vec<String> {
+        a.iter().map(|s| s.to_string()).collect()
+    }
+
+    #[test]
+    fn help_flags_are_recognised() {
+        assert!(wants_help(&args(&["--help"])));
+        assert!(wants_help(&args(&["book.xlsx", "-h"])));
+        assert!(!wants_help(&args(&["book.xlsx", "--sample"])));
+        assert!(!wants_help(&[]));
+    }
+
+    #[test]
+    fn usage_names_every_option_the_parser_reads() {
+        let text = usage();
+        for flag in ["--sample", "--control", "--control-token", "--version", "--help"] {
+            assert!(text.contains(flag), "usage lacks {flag}");
         }
     }
 }
