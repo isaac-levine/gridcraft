@@ -127,9 +127,9 @@ fn custom_ok(v: &Value, text: &str, op: &str, crit: &str) -> bool {
         (Some(a), Some(b)) => a.partial_cmp(&b),
         // A numeric ordering comparison only matches numbers; blanks and text never do.
         (None, Some(_)) if matches!(op, "<" | "<=" | ">" | ">=") => None,
-        _ => Some(gridcraft_core::compare_text(text, crit)),
+        _ => Some(gridcraft_core::compare_text(text.trim(), crit.trim())),
     };
-    let wild = || crate::cmd::edit::wildcard(&text.to_lowercase(), &crit.to_lowercase());
+    let wild = || crate::cmd::edit::wildcard(&text.trim().to_lowercase(), &crit.trim().to_lowercase());
     match op {
         "=" => {
             if crit.contains(['*', '?']) {
@@ -155,6 +155,11 @@ fn custom_ok(v: &Value, text: &str, op: &str, crit: &str) -> bool {
         "notContains" => !text.to_lowercase().contains(&crit.to_lowercase()),
         _ => true,
     }
+}
+
+/// What the value list compares: surrounding spaces and letter case (any script) do not tell values apart (#2860).
+fn value_key(t: &str) -> String {
+    t.trim().to_lowercase()
 }
 
 /// The filter's "(Blanks)" group: truly empty cells and zero-length text such as a `=""` result.
@@ -205,6 +210,15 @@ pub(crate) fn apply_filter(wb: &mut Workbook, sheet: usize) {
             col_stats.insert(i, (thr, avg));
         }
     }
+    let value_sets: std::collections::HashMap<usize, std::collections::HashSet<String>> = af
+        .criteria
+        .iter()
+        .enumerate()
+        .filter_map(|(i, (_, c))| match c {
+            FilterCriterion::Values { values, .. } => Some((i, values.iter().map(|x| value_key(x)).collect())),
+            _ => None,
+        })
+        .collect();
     for row in r.start.row + 1..=r.end.row {
         let mut visible = true;
         for (i, (off, crit)) in af.criteria.iter().enumerate() {
@@ -212,11 +226,11 @@ pub(crate) fn apply_filter(wb: &mut Workbook, sheet: usize) {
             let v = sh.value(c);
             let text = crate::display::cell_text(wb, sh, c);
             let ok = match crit {
-                FilterCriterion::Values { values, blanks } => {
+                FilterCriterion::Values { blanks, .. } => {
                     if filter_blank(&v) {
                         *blanks
                     } else {
-                        values.iter().any(|x| x.eq_ignore_ascii_case(&text) || x.eq_ignore_ascii_case(&v.display()))
+                        value_sets.get(&i).is_some_and(|set| set.contains(&value_key(&text)) || set.contains(&value_key(&v.display())))
                     }
                 }
                 FilterCriterion::Custom { a, b, and } => {
@@ -296,24 +310,32 @@ pub fn filter_values(wb: &Workbook, sheet: usize, col: u32) -> Vec<(String, bool
     let Some(af) = &sh.autofilter else { return vec![] };
     let off = col.saturating_sub(af.range.start.col);
     let selected: Option<&FilterCriterion> = af.criteria.iter().find(|(o, _)| *o == off).map(|(_, c)| c);
+    let selected_keys: Option<std::collections::HashSet<String>> = match selected {
+        Some(FilterCriterion::Values { values, .. }) => Some(values.iter().map(|x| value_key(x)).collect()),
+        _ => None,
+    };
+    // One row per value key: "Card", " Card" and "CARD" are the same entry, shown by its first spelling.
     let mut seen = std::collections::BTreeMap::new();
     for row in af.range.start.row + 1..=af.range.end.row.min(af.range.start.row + 1_000_000) {
         let c = CellRef::new(row, col);
         let v = sh.value(c);
         let blank = filter_blank(&v);
         let t = if blank { "(Blanks)".to_string() } else { crate::display::cell_text(wb, sh, c) };
-        let on = match selected {
-            Some(FilterCriterion::Values { values, blanks }) => {
+        let on = match (selected, &selected_keys) {
+            (Some(FilterCriterion::Values { blanks, .. }), Some(keys)) => {
                 if blank {
                     *blanks
                 } else {
-                    values.iter().any(|x| x.eq_ignore_ascii_case(&t))
+                    keys.contains(&value_key(&t))
                 }
             }
             _ => true,
         };
         let key = if blank { sort_key(&Value::Empty) } else { sort_key(&v) };
-        seen.entry((key, t)).or_insert(on);
+        let shown = if blank { t } else { t.trim().to_string() };
+        seen.entry(if blank { String::new() } else { value_key(&shown) }).or_insert((key, shown, on));
     }
-    seen.into_iter().map(|((_, t), on)| (t, on)).collect()
+    let mut out: Vec<_> = seen.into_values().collect();
+    out.sort_by(|a, b| (&a.0, &a.1).cmp(&(&b.0, &b.1)));
+    out.into_iter().map(|(_, t, on)| (t, on)).collect()
 }

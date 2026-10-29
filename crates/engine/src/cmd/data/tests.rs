@@ -507,3 +507,31 @@ fn a_rule_with_an_unknown_type_operator_or_error_style_is_refused() {
     assert_eq!(sh.validations.len(), 3);
     assert!(check_validation(&s.doc().unwrap().wb, 0, CellRef::parse("A2").unwrap(), "0").is_some());
 }
+
+#[test]
+fn filter_values_ignore_surrounding_spaces_and_unicode_case() {
+    // #2860: the value list matched untrimmed text with ASCII-only case folding.
+    let mut s = Session::new();
+    s.new_workbook();
+    let col = ["Name", "Card", " Card", "Card  ", "card", "CARD", "Cardx", "Ca rd", "ÁRBOL", "árbol"];
+    let rows: Vec<_> = col.iter().map(|t| json!([t])).collect();
+    s.execute("range.setValues", json!({"range": "A1", "values": rows})).unwrap();
+    s.execute("data.filter", json!({"range": "A1:A10"})).unwrap();
+    let hidden = |s: &Session| -> Vec<u32> {
+        let sh = s.doc().unwrap().wb.active().unwrap();
+        (1..10).filter(|r| sh.is_row_hidden(*r)).collect()
+    };
+    s.execute("data.filterBy", json!({"column": "A", "values": ["Card"]})).unwrap();
+    assert_eq!(hidden(&s), vec![6, 7, 8, 9], "the six Card spellings stay, Cardx, Ca rd and the Spanish words go");
+    s.execute("data.filterBy", json!({"column": "A", "values": [" card "]})).unwrap();
+    assert_eq!(hidden(&s), vec![6, 7, 8, 9]);
+    s.execute("data.filterBy", json!({"column": "A", "values": ["árbol"]})).unwrap();
+    assert_eq!(hidden(&s), vec![1, 2, 3, 4, 5, 6, 7], "ÁRBOL and árbol match each other");
+    s.execute("data.filterBy", json!({"column": "A", "custom": {"op": "=", "value": "Card"}})).unwrap();
+    assert_eq!(hidden(&s), vec![6, 7, 8, 9], "the custom filter trims too");
+    // The dropdown lists one entry per spelling group.
+    let vals = filter_values(&s.doc().unwrap().wb, 0, 0);
+    let names: Vec<_> = vals.iter().map(|(t, _)| t.as_str()).collect();
+    assert_eq!(names.iter().filter(|t| t.eq_ignore_ascii_case("card")).count(), 1, "{names:?}");
+    assert_eq!(names.len(), 4, "{names:?}");
+}
