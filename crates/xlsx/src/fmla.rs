@@ -6,10 +6,27 @@ use gridcraft_model::Formula;
 
 /// Formula text for a file.
 pub fn to_file(f: &Formula) -> String {
-    match f.expr() {
-        Some(e) => expr_to_file(e),
+    match f.expr_arc() {
+        // Most formulas have nothing the file spells differently: print them without copying.
+        Some(e) if !needs_file_spelling(&e) => gridcraft_formula::print(&e),
+        Some(e) => expr_to_file(Expr::clone(&e)),
         None => f.text.clone(),
     }
+}
+
+/// Whether [`expr_to_file`] would change anything in `e`: a LET or LAMBDA (parameter prefixes),
+/// a function with a file prefix, a spill, `@` or trim operator, or a structured reference.
+fn needs_file_spelling(e: &Expr) -> bool {
+    let mut found = false;
+    e.walk(&mut |x| {
+        found |= match x {
+            Expr::Call(name, _) => name == "LET" || name == "LAMBDA" || crate::tables::file_function_name(name).is_some(),
+            Expr::Unary(gridcraft_formula::UnOp::Spill | gridcraft_formula::UnOp::At | gridcraft_formula::UnOp::Trim(_), _) => true,
+            Expr::Struct(_) => true,
+            _ => false,
+        }
+    });
+    found
 }
 
 /// Arbitrary formula text (names, CF, validation) for a file. Unparseable text is kept.
@@ -30,7 +47,21 @@ fn prefix_params(e: Expr, scope: &[String]) -> Expr {
         Expr::Name(n) if scope.iter().any(|s| s.eq_ignore_ascii_case(&n)) => Expr::Name(format!("{PARAM_PREFIX}{n}")),
         Expr::Unary(op, x) => Expr::Unary(op, sub(x, scope)),
         Expr::Paren(x) => Expr::Paren(sub(x, scope)),
-        Expr::Binary(op, a, b) => Expr::Binary(op, sub(a, scope), sub(b, scope)),
+        Expr::Binary(op, a, b) => {
+            // A long chain such as A1+A2+… nests on its left: follow it in a loop, not one
+            // level of recursion per operand.
+            let mut spine = vec![(op, b)];
+            let mut left = *a;
+            while let Expr::Binary(op, a, b) = left {
+                spine.push((op, b));
+                left = *a;
+            }
+            let mut acc = prefix_params(left, scope);
+            while let Some((op, b)) = spine.pop() {
+                acc = Expr::Binary(op, Box::new(acc), sub(b, scope));
+            }
+            acc
+        }
         Expr::Invoke(c, args) => Expr::Invoke(sub(c, scope), args.into_iter().map(|a| prefix_params(a, scope)).collect()),
         Expr::Call(name, args) if name == "LET" || name == "LAMBDA" => {
             let last = args.len().saturating_sub(1);
@@ -82,6 +113,9 @@ fn expr_to_file(e: Expr) -> String {
         Expr::Unary(gridcraft_formula::UnOp::Spill, r) => Expr::Call("_xlfn.ANCHORARRAY".into(), vec![*r]),
         // Nor an `@` operator: Excel writes `@x` as `_xlfn.SINGLE(x)`.
         Expr::Unary(gridcraft_formula::UnOp::At, x) => Expr::Call("_xlfn.SINGLE".into(), vec![*x]),
+        // Nor the `[@Col]` shorthand: files spell it `[[#This Row],[Col]]`, or Excel repairs
+        // the file and drops the table. Carried as a name, which prints verbatim.
+        Expr::Struct(st) => Expr::Name(gridcraft_formula::printer::struct_ref_file(&st)),
         // Nor trim-reference operators: written as the equivalent `TRIMRANGE(range,n,n)`, which
         // every Excel with trim references reads. (Excel's own file spelling of `A1:.E10` is
         // not publicly documented; the `_xlfn._TRO_*` call forms are accepted on read.)
@@ -119,6 +153,68 @@ pub fn from_file(text: &str) -> String {
 mod tests {
     use super::*;
 
+    /// Formulas without a file spelling skip the rewrite; the text must be what it would give.
+    #[test]
+    fn plain_formulas_print_as_the_rewrite_would() {
+        for text in [
+            "SUM(A1:B2)*2",
+            "A1&\"x\"\"y\"",
+            "Sheet2!$A$1+'My Sheet'!C:C-$3:4",
+            "IF(A1>0,{1,2;3,4},-B$2%)",
+            "Sheet1:Sheet3!A1",
+            "INDEX(A:A,1):B5",
+            "Total*2",
+            "XLOOKUP(1,A:A,B:B)",
+            "LET(x,1,x)",
+            "LAMBDA(a,a)(1)",
+            "A1#",
+            "@A1:A2",
+            "SUM(A1:.B3)",
+            "T[@C]",
+        ] {
+            let f = Formula::new(text);
+            assert_eq!(to_file(&f), expr_to_file(f.expr().unwrap()), "{text}");
+        }
+    }
+
+    /// The fast path in [`to_file`] skips the rewrite on a list of what triggers it. Run both paths
+    /// over every registered function, alone, nested and next to every operator, so a function or
+    /// rewrite added later without updating [`needs_file_spelling`] fails here.
+    #[test]
+    fn every_registered_function_prints_as_the_rewrite_would() {
+        let shapes = [
+            "{}",
+            "1+{}",
+            "-{}%",
+            "SUM({},A1:B2)",
+            "IF(A1,{},Sheet2!$C$3)",
+            "LET(x,{},x)",
+            "LAMBDA(a,{})(1)",
+            "@{}",
+            "{}&A1#",
+            "{}+SUM(A1:.B3)",
+            "{}+T[@C]",
+            "{}+T[[#All],[C]]",
+            "({})*{{1,2;3,4}}",
+            "{}:B5 C1:D2",
+            "{}+My Sheet!A:A+Total",
+        ];
+        let mut checked = 0;
+        for spec in gridcraft_functions::all() {
+            let n = spec.min_args.max(1).min(spec.max_args).min(4);
+            let args = ["A1", "B2:C3", "1", "\"x\""].get(..n).unwrap_or_default().join(",");
+            let call = format!("{}({args})", spec.name);
+            for shape in shapes {
+                let text = shape.replace("{}", &call).replace("{{", "{").replace("}}", "}");
+                let f = Formula::new(&text);
+                let Some(e) = f.expr() else { continue };
+                assert_eq!(to_file(&f), expr_to_file(e), "{text}");
+                checked += 1;
+            }
+        }
+        assert!(checked > gridcraft_functions::all().len() * 10, "only {checked} formulas parsed");
+    }
+
     #[test]
     fn spill_references() {
         assert_eq!(to_file(&Formula::new("SUM(Sheet1!$D$1#)+B2#")), "SUM(_xlfn.ANCHORARRAY(Sheet1!$D$1))+_xlfn.ANCHORARRAY(B2)");
@@ -150,6 +246,32 @@ mod tests {
     #[test]
     fn unbracketed_this_row_column() {
         assert_eq!(from_file("Sales[[#This Row],Units]*[[#This Row],Price]"), "Sales[@Units]*[@Price]");
+    }
+
+    #[test]
+    fn this_row_long_form() {
+        // `[@Col]` is only Excel's display shorthand; a file holding it is repaired by Excel,
+        // which drops the table.
+        assert_eq!(to_file(&Formula::new("Sales[@Units]*Sales[@[Unit Price]]")), "Sales[[#This Row],[Units]]*Sales[[#This Row],[Unit Price]]");
+        assert_eq!(text_to_file("=[@Units]&COUNTA(Sales[@])"), "[[#This Row],[Units]]&COUNTA(Sales[#This Row])");
+        assert_eq!(text_to_file("=SUM(Sales[Units])+[#Totals]"), "SUM(Sales[Units])+[#Totals]");
+        for f in ["Sales[@Units]*[@[Unit Price]]", "Sales[@]", "[@[Unit Price]]+1"] {
+            let file = to_file(&Formula::new(f));
+            assert!(!file.contains("[@"), "{file}");
+            assert_eq!(from_file(&file), f);
+        }
+    }
+
+    #[test]
+    fn struct_ref_column_with_bang() {
+        // A `!` inside the brackets is part of the column name, not a sheet separator.
+        assert_eq!(to_file(&Formula::new("SUM(Table1[Done!])")), "SUM(Table1[Done!])");
+        assert_eq!(text_to_file("=Table1[[#This Row],[a!b]]"), "Table1[[#This Row],[a!b]]");
+        // `Table1[#REF!]` was found by the command-sequence fuzzer (seed 40).
+        for text in ["SUM(Table1[Done!])", "Table1[#REF!]", "Table1[@[x!]]", "Sheet2!A1+Table1[[#All],[a!b]]"] {
+            let f = Formula::new(text);
+            assert_eq!(from_file(&to_file(&f)), f.text);
+        }
     }
 
     #[test]
