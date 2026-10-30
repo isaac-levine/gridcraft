@@ -2274,3 +2274,20 @@ fn loan_schedule_residue_keeps_excels_sign() {
     }
     assert_eq!(t.get("P7"), Value::Text("".into()));
 }
+
+#[test]
+fn text_functions_count_the_cell_limit_in_utf16_units() {
+    let mut t = T::new();
+    // An emoji is two UTF-16 units, so 16,384 of them is one over the limit.
+    t.set("A1", "=REPT(\"\u{1F600}\",16383)");
+    t.set("A2", "=REPT(\"\u{1F600}\",16384)");
+    t.set("A3", "=SUBSTITUTE(REPT(\"x\",16384),\"x\",\"\u{1F600}\")");
+    t.set("A4", "=REPLACE(REPT(\"\u{1F600}\",16383),1,0,\"ab\")");
+    t.set("A5", "=CONCAT(REPT(\"\u{1F600}\",16383),\"ab\")");
+    t.set("A6", "=REPT(\"\u{1F600}\",16383)&\"a\"");
+    assert!(matches!(t.get("A1"), Value::Text(_)));
+    for at in ["A2", "A3", "A4", "A5"] {
+        assert_eq!(t.get(at), Value::Error(CellError::Value), "{at}");
+    }
+    assert!(matches!(t.get("A6"), Value::Text(_)));
+}

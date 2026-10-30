@@ -5,8 +5,8 @@ use gridcraft_core::{CellError, Value, number_to_text};
 
 use crate::criteria::wildcard_find;
 use crate::util::{
-    A, MAX_CELLS, MAX_TEXT, R, S, arg, array_val, as_array, boolean, has, int, num, num_val, opt_bool, opt_int, opt_num, round_half_away, scalar,
-    text, text_val,
+    A, MAX_CELLS, MAX_TEXT, R, S, arg, array_val, as_array, boolean, has, int, num, num_val, opt_bool, opt_int, opt_num, over_cell_limit,
+    round_half_away, scalar, text, text_val,
 };
 use crate::{Arg, Ctx, FnSpec, VAR};
 
@@ -20,7 +20,7 @@ fn chars(s: &str) -> Vec<char> {
 }
 
 fn check_len(s: String) -> R<Value> {
-    if s.len() > MAX_TEXT && s.chars().count() > MAX_TEXT {
+    if over_cell_limit(&s) {
         return Err(CellError::Value);
     }
     text_val(s)
@@ -203,7 +203,7 @@ fn rept(a: &[Arg], _c: &mut dyn Ctx) -> R<Value> {
         return Err(CellError::Value);
     }
     let n = n.trunc();
-    let total = s.chars().count() as f64 * n;
+    let total = s.encode_utf16().count() as f64 * n;
     if total > MAX_TEXT as f64 {
         return Err(CellError::Value);
     }
