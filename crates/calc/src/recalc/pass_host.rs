@@ -24,6 +24,8 @@ pub(super) struct PassHost<'a> {
     /// Used range per sheet: the workbook doesn't change during a pass, and working it out walks
     /// every row, so once per sheet rather than once per range read.
     used: HashMap<usize, Option<RangeRef>>,
+    /// Ranges of the legacy array formulas per sheet, found once per sheet like `used`.
+    legacy_ranges: std::cell::RefCell<HashMap<usize, std::rc::Rc<Vec<RangeRef>>>>,
     rng: &'a mut u64,
     now: f64,
     cycle: bool,
@@ -67,6 +69,18 @@ pub(super) struct PassHost<'a> {
 }
 
 impl<'a> PassHost<'a> {
+    /// The ranges of the sheet's legacy array formulas.
+    fn legacy_ranges(&self, sheet: usize) -> std::rc::Rc<Vec<RangeRef>> {
+        let mut map = self.legacy_ranges.borrow_mut();
+        map.entry(sheet)
+            .or_insert_with(|| {
+                let found =
+                    self.wb.sheet(sheet).map(|sh| sh.cells.iter().filter_map(|(_, c)| c.formula.as_ref().and_then(|f| f.array)).collect::<Vec<_>>());
+                std::rc::Rc::new(found.unwrap_or_default())
+            })
+            .clone()
+    }
+
     pub(super) fn new(wb: &'a Workbook, exprs: &'a HashMap<Key, std::sync::Arc<Expr>>, rng: &'a mut u64, now: f64) -> Self {
         PassHost {
             wb,
@@ -76,6 +90,7 @@ impl<'a> PassHost<'a> {
             in_progress: HashSet::default(),
             spills: HashMap::default(),
             used: HashMap::default(),
+            legacy_ranges: Default::default(),
             rng,
             now,
             cycle: false,
@@ -105,12 +120,16 @@ impl<'a> PassHost<'a> {
 /// recalculated in this pass, and so may spill elsewhere now).
 fn spill_blocked(host: &PassHost<'_>, (sheet, anchor): Key, a: &Array) -> bool {
     let Some(sh) = host.wb.sheet(sheet) else { return false };
+    let is_legacy = sh.cell(anchor).and_then(|c| c.formula.as_ref()).is_some_and(|f| f.array.is_some());
     let end =
         CellRef::new(anchor.row.saturating_add((a.rows as u32).saturating_sub(1)), anchor.col.saturating_add((a.cols as u32).saturating_sub(1)));
     let range = RangeRef::new(anchor, end);
     let own = sh.spill_ranges.get(&anchor);
+    // A legacy array always takes its range, even over a dynamic array's spill area. The dynamic
+    // array is the one that shows #SPILL!, as in Excel.
     let spilled_over = |c: CellRef| {
-        !own.is_some_and(|o| o.contains(c))
+        !is_legacy
+            && !own.is_some_and(|o| o.contains(c))
             && sh.spill_ranges.iter().any(|(o, r)| *o != anchor && r.contains(c) && !host.exprs.contains_key(&(sheet, *o)))
     };
     end.row >= gridcraft_core::MAX_ROWS
@@ -119,6 +138,7 @@ fn spill_blocked(host: &PassHost<'_>, (sheet, anchor): Key, a: &Array) -> bool {
         || sh.tables.iter().any(|t| t.range.contains(anchor))
         || sh.cells.iter_range(range).any(|(c, cell)| c != anchor && (!cell.value.is_empty() || cell.formula.is_some()))
         || sh.spill.range(range.start..=range.end).any(|(c, _)| range.contains(*c) && spilled_over(*c))
+        || (!is_legacy && host.legacy_ranges(sheet).iter().any(|r| *r != range && r.intersects(&range)))
 }
 
 /// Whether `arr`, anchored at `anchor`, would spill exactly what the sheet already holds over

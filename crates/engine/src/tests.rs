@@ -2840,6 +2840,39 @@ fn a_spill_that_goes_away_unblocks_another() {
 }
 
 #[test]
+fn a_legacy_array_over_a_spill_area_takes_its_range() {
+    // The legacy array's top-left cell is outside the spill area of D1 (D3 is inside). Excel gives
+    // the range to the legacy array and shows #SPILL! in the dynamic array.
+    let spill = Value::Error(gridcraft_core::CellError::Spill);
+    let mut s = s();
+    s.execute("cell.set", json!({"cell": "D1", "input": "=SEQUENCE(5)"})).unwrap();
+    s.execute("cell.set", json!({"cell": "H1", "input": "=SUM(D1:D5)"})).unwrap();
+    s.execute("selection.set", json!({"range": "C3:E3"})).unwrap();
+    s.execute("cell.set", json!({"cell": "C3", "input": "=1", "array": true})).unwrap();
+    assert_eq!((v(&s, "C3"), v(&s, "D3"), v(&s, "E3")), (Value::Number(1.0), Value::Number(1.0), Value::Number(1.0)));
+    assert_eq!((v(&s, "D1"), v(&s, "D2"), v(&s, "H1")), (spill.clone(), Value::Empty, spill));
+    // Calculate Now changes nothing.
+    s.execute("formulas.calculateNow", json!({})).unwrap();
+    assert_eq!((v(&s, "C3"), v(&s, "D1")), (Value::Number(1.0), Value::Error(gridcraft_core::CellError::Spill)));
+    // Deleting the legacy array lets the dynamic array spill again.
+    s.execute("edit.clearContents", json!({"range": "C3:E3"})).unwrap();
+    assert_eq!((v(&s, "D1"), v(&s, "D5"), v(&s, "H1")), (Value::Number(1.0), Value::Number(5.0), Value::Number(15.0)));
+}
+
+#[test]
+fn a_legacy_array_over_two_spill_areas_blocks_both() {
+    let spill = Value::Error(gridcraft_core::CellError::Spill);
+    let mut s = s();
+    s.execute("cell.set", json!({"cell": "D1", "input": "=SEQUENCE(5)"})).unwrap();
+    s.execute("cell.set", json!({"cell": "F1", "input": "=SEQUENCE(5,1,10)"})).unwrap();
+    s.execute("selection.set", json!({"range": "C3:G3"})).unwrap();
+    s.execute("cell.set", json!({"cell": "C3", "input": "=1", "array": true})).unwrap();
+    assert_eq!((v(&s, "C3"), v(&s, "G3"), v(&s, "D1"), v(&s, "F1")), (Value::Number(1.0), Value::Number(1.0), spill.clone(), spill));
+    s.execute("edit.clearContents", json!({"range": "C3:G3"})).unwrap();
+    assert_eq!((v(&s, "D5"), v(&s, "F5")), (Value::Number(5.0), Value::Number(14.0)));
+}
+
+#[test]
 fn an_array_reading_another_arrays_spill_is_updated() {
     // G5 is evaluated before D11 in the same pass, so it first reads D11's old spill.
     let mut s = s();

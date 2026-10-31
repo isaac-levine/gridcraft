@@ -249,6 +249,15 @@ impl Calc {
                         seeds.push((k.0, *anchor));
                     }
                 }
+                // A legacy array takes its whole range: the dynamic arrays spilling into it
+                // are re-evaluated and show #SPILL!.
+                if let Some(range) = sh.cell(k.1).and_then(|c| c.formula.as_ref()).and_then(|f| f.array) {
+                    for (anchor, r) in &sh.spill_ranges {
+                        if *anchor != k.1 && r.intersects(&range) {
+                            seeds.push((k.0, *anchor));
+                        }
+                    }
+                }
                 for (c, cell) in sh.cells.iter_range(RangeRef::new(CellRef::new(k.1.row.saturating_sub(64), k.1.col.saturating_sub(64)), k.1)) {
                     if c != k.1 && cell.value == Value::Error(CellError::Spill) {
                         seeds.push((k.0, c));
@@ -262,10 +271,12 @@ impl Calc {
                 }
             }
         }
-        // An emptied cell can unblock an anchor any distance above or to the left of it.
-        for (si, end) in emptied {
+        // An emptied cell can unblock an anchor any distance above or to the left of it. Clearing a
+        // legacy array frees cells anywhere in its range, which the changed cells don't name, so an
+        // anchor to the right of the cleared cell can be freed too.
+        for (si, _end) in emptied {
             for &(s, c) in self.graph.nodes.keys() {
-                if s == si && c.row <= end.row && c.col <= end.col && wb.sheet(s).is_some_and(|sh| sh.value(c) == Value::Error(CellError::Spill)) {
+                if s == si && wb.sheet(s).is_some_and(|sh| sh.value(c) == Value::Error(CellError::Spill)) {
                     seeds.push((s, c));
                 }
             }
@@ -413,7 +424,11 @@ impl Calc {
                 cell.value = value;
             }
         }
-        for key in dirty {
+        // Anchors that no longer spill go first, so the cells they free are free for the arrays
+        // that now take them (a legacy array over a dynamic array's old area).
+        let mut order: Vec<&Key> = dirty.iter().collect();
+        order.sort_by_key(|k| spills.contains_key(*k));
+        for key in order {
             let new = spills.get(key);
             let Some(sheet) = wb.sheet_mut(key.0) else { continue };
             let old = sheet.spill_ranges.get(&key.1).copied();
