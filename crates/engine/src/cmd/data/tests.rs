@@ -507,3 +507,28 @@ fn a_rule_with_an_unknown_type_operator_or_error_style_is_refused() {
     assert_eq!(sh.validations.len(), 3);
     assert!(check_validation(&s.doc().unwrap().wb, 0, CellRef::parse("A2").unwrap(), "0").is_some());
 }
+
+#[test]
+fn circle_invalid_includes_blanks_and_rules_with_the_alert_off() {
+    let mut s = Session::new();
+    s.new_workbook();
+    s.execute(
+        "range.setValues",
+        json!({"range": "A1", "values": [["Qty", "Code", "NoAlert"], [5, "x", 5], [20, "z", 50], ["abc", null, 7], [0, "y", null], [7, "x", null]]}),
+    )
+    .unwrap();
+    s.execute("data.validation", json!({"range": "A2:A6", "type": "whole", "operator": "between", "formula1": "1", "formula2": "10"})).unwrap();
+    s.execute("data.validation", json!({"range": "B2:B6", "type": "list", "formula1": "x,y", "ignoreBlank": false})).unwrap();
+    s.execute("data.validation", json!({"range": "C2:C4", "type": "whole", "operator": "between", "formula1": "1", "formula2": "10"})).unwrap();
+    // The command always turns the alert on, so switch it off the way an XLSX file can.
+    let sh = Arc::make_mut(&mut s.doc_mut().unwrap().wb).sheet_mut(0).unwrap();
+    for dv in sh.validations.iter_mut().filter(|d| d.ranges.iter().any(|r| r.contains(CellRef::parse("C2").unwrap()))) {
+        dv.show_error = false;
+    }
+    let r = s.execute("data.circleInvalid", json!({})).unwrap();
+    let mut got: Vec<String> = r["invalid"].as_array().unwrap().iter().map(|v| v.as_str().unwrap().to_string()).collect();
+    got.sort();
+    assert_eq!(got, ["A3", "A4", "A5", "B3", "B4", "C3"]);
+    // Typing under the alert-off rule stays allowed.
+    assert!(check_validation(&s.doc().unwrap().wb, 0, CellRef::parse("C3").unwrap(), "50").is_none());
+}
