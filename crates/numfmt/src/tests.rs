@@ -298,6 +298,16 @@ fn time_formats() {
 }
 
 #[test]
+fn negative_time_in_1904_system() {
+    let at = |code: &str, n: f64, sys| format_value(&Value::Number(n), &NumberFormat::parse(code), sys).text;
+    assert_eq!(at("[h]:mm", -1.5 / 24.0, DateSystem::D1904), "-1:30");
+    assert_eq!(at("h:mm:ss", -0.5, DateSystem::D1904), "-12:00:00");
+    assert_eq!(at("[h]:mm", -1.5 / 24.0, DateSystem::D1900), "########");
+    assert_eq!(at("m/d/yyyy", -1.0, DateSystem::D1904), "########");
+    assert_eq!(at("m/d/yyyy h:mm", -0.5, DateSystem::D1904), "########");
+}
+
+#[test]
 fn date_serial_boundaries() {
     assert_eq!(f("h:mm:ss", 0.5 + 59.6 / 86400.0), "12:01:00");
     assert_eq!(f("h:mm", 0.5 + 40.0 / 86400.0), "12:00");

@@ -305,7 +305,9 @@ impl NumberFormat {
                 Some(render::render_general(sec, n.abs(), width))
             }
             SecKind::Date => {
-                if minus {
+                // The 1904 system shows a negative time with a minus sign. A format with a calendar
+                // part still has no date to show before the epoch, and the 1900 system never does.
+                if minus && !(sys == DateSystem::D1904 && !sec.toks.iter().any(|t| matches!(t, Tok::Date(d) if d.is_calendar()))) {
                     None
                 } else {
                     render::render_date(sec, n.abs(), sys)
