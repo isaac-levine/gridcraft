@@ -527,7 +527,8 @@ pub(crate) fn locked_cell_error(sh: &gridcraft_model::Sheet, c: CellRef, unlocke
 /// column edits aren't edits of their content, so structural commits aren't checked.
 fn check_arrays(old: &Workbook, new: &Workbook) -> Result<()> {
     for sh in &old.sheets {
-        if sh.spill.is_empty() {
+        // A merge blocks an array from spilling, so an array over a merged area leaves no spill.
+        if sh.spill.is_empty() && sh.merges.is_empty() {
             continue;
         }
         let Some(after) = new.sheet_index(&sh.name).and_then(|i| new.sheets.get(i)) else { continue };
@@ -536,7 +537,13 @@ fn check_arrays(old: &Workbook, new: &Workbook) -> Result<()> {
         }
         for c in sh.cells.diff(&after.cells) {
             let filled = after.cell(c).is_some_and(gridcraft_model::Cell::has_content);
-            if !filled || !sh.spill.contains_key(&c) || same_content(sh.cell(c), after.cell(c)) {
+            if !filled || same_content(sh.cell(c), after.cell(c)) {
+                continue;
+            }
+            if !sh.spill.contains_key(&c) {
+                if after.merges.iter().any(|m| m.contains(c)) && in_blocked_array(after, c) {
+                    return Err(EngineError::Other("You can't change part of an array.".into()));
+                }
                 continue;
             }
             let in_array = sh.spill_ranges.keys().any(|&anchor| {
@@ -549,6 +556,14 @@ fn check_arrays(old: &Workbook, new: &Workbook) -> Result<()> {
         }
     }
     Ok(())
+}
+
+/// Whether `c` lies in a multi-cell legacy array whose formula cell is another cell. Only used for
+/// cells in merged areas, where the array has no spill to find it by.
+fn in_blocked_array(sh: &gridcraft_model::Sheet, c: gridcraft_core::CellRef) -> bool {
+    sh.cells.iter().any(|(anchor, cell)| {
+        anchor != c && cell.formula.as_ref().and_then(|f| f.array).is_some_and(|a| !a.is_single() && a.start == anchor && a.contains(c))
+    })
 }
 
 /// Two cells hold the same value, formula or Python code (formats aside; a Python cell's result
