@@ -108,7 +108,8 @@ fn craft_fonts(dir: &std::path::Path, wasm: bool, required: bool) -> Result<Stri
 
 /// The opt-in native Simplified Chinese rows. Older craft-fonts checkouts may lack the manifest, so
 /// an ordinary build warns and carries on; a required acceptance build fails rather than passing
-/// Chinese coverage only because the face was silently absent.
+/// Chinese coverage only because the face was silently absent. A listed face whose file is missing
+/// is treated like a missing manifest, so it can't take the main faces down with it.
 fn chinese_font_rows(dir: &std::path::Path, required: bool) -> Result<Vec<craft_fonts_policy::ManifestRow>, String> {
     let manifest = dir.join("fonts/simplified-chinese-manifest.txt");
     println!("cargo::rerun-if-changed={}", manifest.display());
@@ -126,7 +127,14 @@ fn chinese_font_rows(dir: &std::path::Path, required: bool) -> Result<Vec<craft_
             craft_fonts_policy::check_chinese_required(&rows)?;
             Ok(rows)
         }) {
-            Ok(rows) => Ok(rows),
+            Ok(rows) => {
+                // A sparse checkout can list a face it doesn't carry. Embedding the other faces
+                // still works, so an ordinary build drops just the Chinese rows. A required build fails.
+                match rows.iter().find(|r| !dir.join(&r.file).is_file()) {
+                    Some(missing) => optional(format!("{} is not in the checkout", missing.file)),
+                    None => Ok(rows),
+                }
+            }
             Err(e) => optional(e),
         },
         Err(e) => optional(e.to_string()),
