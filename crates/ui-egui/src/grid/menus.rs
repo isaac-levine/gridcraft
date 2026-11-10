@@ -154,6 +154,11 @@ pub(super) fn context_menu(app: &mut SheetApp, ui: &mut egui::Ui) {
                 ("Define Name…", "ui:defineName"),
                 ("Link…", "ui:insertLink"),
             ];
+            if crate::dialogs::has_note(app)
+                && let Some(i) = items.iter().position(|(_, id)| *id == "ui:newNote")
+            {
+                items[i] = ("Edit Note", "ui:newNote");
+            }
             if let Some(item) = insert_copied {
                 items.insert(6, item);
             }

@@ -133,3 +133,24 @@ fn a_linked_cell_offers_to_edit_open_and_remove_its_link() {
     quick_right_click(&mut h, "B2");
     assert!(h.query_by_label("Link…").is_some() && h.query_by_label("Edit Hyperlink…").is_none());
 }
+
+#[test]
+fn a_cell_with_a_note_offers_edit_note_with_its_text() {
+    // #3693: only "New Note" was offered, so a note looked impossible to edit.
+    use egui_kittest::kittest::Queryable as _;
+    let mut h = harness();
+    h.state_mut().session.execute("review.newNote", serde_json::json!({"cell": "B2", "text": "check this", "author": "Ada"})).unwrap();
+    h.run_steps(2);
+    quick_right_click(&mut h, "B2");
+    assert!(h.query_by_label("Edit Note").is_some() && h.query_by_label("New Note").is_none(), "noted cell menu");
+    h.get_by_label("Edit Note").click();
+    h.run_steps(4);
+    let d = h.state().dialog.as_ref().expect("the note dialog");
+    assert_eq!(d.title, "Edit Note");
+    assert_eq!(d.values.get("text").and_then(|v| v.as_str()), Some("check this"));
+    h.state_mut().dialog = None;
+    h.run_steps(2);
+    // A cell without a note still offers New Note.
+    quick_right_click(&mut h, "C3");
+    assert!(h.query_by_label("New Note").is_some() && h.query_by_label("Edit Note").is_none());
+}

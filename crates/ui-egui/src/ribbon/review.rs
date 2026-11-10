@@ -51,12 +51,13 @@ pub(super) fn review(app: &mut SheetApp, ui: &mut Ui) {
     }
     let notes = big_button(ui, Icon::Note, "Notes", "Notes", true);
     anchor_keytip(app, ui, &notes, &["review.nextComment"]);
+    let note_label = if crate::dialogs::has_note(app) { "Edit Note" } else { "New Note" };
     egui::Popup::menu(&notes).show(|ui| {
         menu_items(
             app,
             ui,
             &[
-                ("New Note", "dialog:comment", json!({"threaded": false})),
+                (note_label, "dialog:comment", json!({"threaded": false})),
                 ("Show/Hide Note", "review.showNote", json!({})),
                 ("Show All Notes", "review.showAllNotes", json!({})),
                 ("-", "", json!({})),

@@ -538,9 +538,17 @@ impl Dialog {
                     .active()
                     .and_then(|d| d.wb.active().and_then(|s| s.comments.get(&d.selection.active).map(|c| c.text.clone())))
                     .unwrap_or_default();
+                // A cell that already has a note opens it for editing, as Excel's Edit Note does.
+                let editing_note = !threaded && has_note(app);
                 Dialog::form(
                     if threaded { "comment" } else { "note" },
-                    if threaded { "New Comment" } else { "New Note" },
+                    if threaded {
+                        "New Comment"
+                    } else if editing_note {
+                        "Edit Note"
+                    } else {
+                        "New Note"
+                    },
                     if threaded { "review.newComment" } else { "review.newNote" },
                     vec![Text { key: "text", label: if threaded { "Start a conversation:" } else { "Note:" } }],
                     json!({"text": existing}),
@@ -1134,6 +1142,11 @@ impl Dialog {
         ref_edit::record_home(app, &mut d);
         Some(d)
     }
+}
+
+/// Whether the active cell holds a note (not a threaded comment).
+pub(crate) fn has_note(app: &SheetApp) -> bool {
+    app.session.active().is_some_and(|d| d.wb.active().is_some_and(|s| s.comments.get(&d.selection.active).is_some_and(|c| !c.threaded)))
 }
 
 #[cfg(test)]
