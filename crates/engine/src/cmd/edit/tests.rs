@@ -454,6 +454,27 @@ fn paste_special_operations_keep_text_errors_and_formulas() {
 }
 
 #[test]
+fn paste_special_operations_with_text_source() {
+    // #3765: a copied text number takes part, other copied text leaves the destination alone.
+    let mut s = Session::new();
+    s.new_workbook();
+    s.execute("range.setValues", json!({"range": "A1", "values": [["'3", "label"], [10, 10], [null, "=C2*2"]]})).unwrap();
+    let get = |s: &mut Session, a: &str| s.execute("cell.get", json!({"cell": a})).unwrap();
+    for (op, want) in [("multiply", 30.0), ("add", 13.0), ("subtract", 7.0), ("divide", 10.0 / 3.0)] {
+        s.execute("range.setValues", json!({"range": "A2", "values": [[10]]})).unwrap();
+        s.execute("edit.copy", json!({"range": "A1"})).unwrap();
+        s.execute("selection.set", json!({"range": "A2"})).unwrap();
+        s.execute("edit.pasteSpecial", json!({"what": "values", "operation": op})).unwrap();
+        assert_eq!(get(&mut s, "A2")["value"], json!(want), "{op}");
+    }
+    s.execute("edit.copy", json!({"range": "B1"})).unwrap();
+    s.execute("selection.set", json!({"range": "B2:A3"})).unwrap();
+    s.execute("edit.pasteSpecial", json!({"what": "values", "operation": "multiply"})).unwrap();
+    assert_eq!(get(&mut s, "B2")["value"], json!(10.0));
+    assert_eq!(get(&mut s, "A3")["value"], json!(null));
+}
+
+#[test]
 fn cut_paste_that_overflows_the_grid_moves_nothing() {
     // #997: the source was emptied first and the cells that fell off the grid were skipped.
     let mut s = Session::new();

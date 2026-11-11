@@ -273,7 +273,7 @@ pub(super) fn paste_special(s: &mut Session, p: &Json) -> Result<Json> {
                             // numbers); other text and errors stay as they are.
                             if let (Ok(x), Ok(y)) = (a.to_number(), b.to_number())
                                 && (a.is_number() || a.is_empty() || a.is_text())
-                                && (b.is_number() || b.is_empty())
+                                && (b.is_number() || b.is_empty() || b.is_text())
                             {
                                 new.value = match op.as_str() {
                                     "add" => Value::number(x + y),
@@ -290,11 +290,17 @@ pub(super) fn paste_special(s: &mut Session, p: &Json) -> Result<Json> {
                                 };
                             } else if (a.is_text() || a.is_error()) && (b.is_number() || b.is_empty()) {
                                 new.value = a;
+                            } else if b.is_text() {
+                                // Copied text that is not a number takes no part: the
+                                // destination keeps its content.
+                                new.value = a;
+                                new.formula = old.formula.clone();
+                                new.py = old.py.clone();
                             }
                             // A formula already there is kept and combined with the pasted number.
                             if let Some(f) = &old.formula
                                 && let Ok(y) = b.to_number()
-                                && (b.is_number() || b.is_empty())
+                                && (b.is_number() || b.is_empty() || b.is_text())
                                 && let Some(sym) = match op.as_str() {
                                     "add" => Some('+'),
                                     "subtract" => Some('-'),
