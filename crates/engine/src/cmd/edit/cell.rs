@@ -65,6 +65,12 @@ pub(crate) fn input_to_cell(input: &str, sheet: usize, at: CellRef, wb: &mut gri
         return Ok(Some(cell));
     }
     let mut parsed = gridcraft_core::parse::parse_input(input, wb.date_system);
+    // A cell formatted day-first (dd.mm.yyyy) reads a typed numeric date day-first too (#3852).
+    if gridcraft_core::parse::format_is_day_first(wb.styles.get(style).num_fmt.as_str())
+        && let Some(p) = gridcraft_core::parse::parse_input_day_first(input, wb.date_system)
+    {
+        parsed = gridcraft_core::parse::Parsed { value: p.value, format: None };
+    }
     // Like Excel's automatic percent entry: a bare number of 1 or more typed into a cell already
     // formatted as a percentage is a percent (3 -> 3%); smaller numbers are taken as fractions.
     if parsed.format.is_none()

@@ -39,6 +39,58 @@ pub fn parse_input(s: &str, sys: DateSystem) -> Parsed {
     Parsed { value: Value::text(s), format: None }
 }
 
+/// True when a date number format shows the day before the month (`dd.mm.yyyy`, `d/m/yy`,
+/// `dd-mmm-yyyy`). Quoted text, escaped characters and `[...]` sections are skipped.
+pub fn format_is_day_first(code: &str) -> bool {
+    let (mut day, mut month) = (None, None);
+    let mut quoted = false;
+    let mut bracket = false;
+    let mut skip = false;
+    for (i, ch) in code.chars().enumerate() {
+        if skip {
+            skip = false;
+            continue;
+        }
+        match ch {
+            '"' => quoted = !quoted,
+            _ if quoted => {}
+            '\\' | '_' | '*' => skip = true,
+            '[' => bracket = true,
+            ']' => bracket = false,
+            _ if bracket => {}
+            'd' | 'D' if day.is_none() => day = Some(i),
+            'm' | 'M' if month.is_none() => month = Some(i),
+            _ => {}
+        }
+    }
+    matches!((day, month), (Some(d), Some(m)) if d < m)
+}
+
+/// Typed input for a cell whose number format is day-first: a numeric `d.m.y` date (any of `/`,
+/// `-` or `.`, optionally followed by a time) is read with the first two numbers swapped, so
+/// `30.12.2000` is 30 December. Returns `None` when the text isn't that shape, and the caller
+/// keeps the ordinary reading.
+pub fn parse_input_day_first(s: &str, sys: DateSystem) -> Option<Parsed> {
+    let t = s.trim();
+    let (date, rest) = match t.split_once(' ') {
+        Some((d, r)) => (d, Some(r)),
+        None => (t, None),
+    };
+    let parts: Vec<&str> = date.split(['/', '-', '.']).collect();
+    let [a, b, c] = parts[..] else { return None };
+    let digits = |x: &str| !x.is_empty() && x.bytes().all(|b| b.is_ascii_digit());
+    // yyyy-mm-dd is already unambiguous.
+    if !(digits(a) && digits(b) && digits(c)) || a.len() == 4 {
+        return None;
+    }
+    let swapped = match rest {
+        Some(r) => format!("{b}/{a}/{c} {r}"),
+        None => format!("{b}/{a}/{c}"),
+    };
+    let parsed = parse_input(&swapped, sys);
+    matches!(parsed.value, Value::Number(_)).then_some(parsed)
+}
+
 /// Numeric text as arithmetic coerces it ("1,000", "50%", "$3", "1/2/2020", "10:00").
 pub fn parse_number_text(s: &str) -> Option<f64> {
     parse_number_text_in(s, DateSystem::D1900)
@@ -393,6 +445,23 @@ mod tests {
 
     fn p(s: &str) -> Parsed {
         parse_input(s, DateSystem::D1900)
+    }
+
+    #[test]
+    fn day_first_formats_and_input() {
+        for code in ["dd.mm.yyyy", "d/m/yy", "dd-mmm-yyyy", "[$-409]dd/mm/yyyy", "\"m\"d.m"] {
+            assert!(format_is_day_first(code), "{code}");
+        }
+        for code in ["m/d/yyyy", "mm/dd/yyyy", "yyyy-mm-dd", "General", "h:mm", "\"day\" mm/dd"] {
+            assert!(!format_is_day_first(code), "{code}");
+        }
+        let d = |s: &str| parse_input_day_first(s, DateSystem::D1900).map(|p| p.value);
+        assert_eq!(d("30.12.2000"), Some(p("12/30/2000").value));
+        assert_eq!(d("10-11-2026 10:30"), Some(p("11/10/2026 10:30").value));
+        assert_eq!(d("2026-11-10"), None);
+        assert_eq!(d("hello"), None);
+        assert_eq!(d("1.2"), None);
+        assert_eq!(d("31.31.2026"), None);
     }
 
     /// #2163: digits too many for a finite number don't make one (∞/∞ was NaN).

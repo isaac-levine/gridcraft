@@ -743,3 +743,22 @@ fn find_and_replace_within_the_selection() {
     let all = s.execute("edit.find", json!({"what": "pear", "all": true})).unwrap();
     assert_eq!(all["count"], 3, "A1, A3 and A4 on the whole sheet");
 }
+
+/// #3852: a cell formatted dd.mm.yyyy read a typed date month-first, so 10.11.2026 became 11 October.
+#[test]
+fn typed_date_follows_a_day_first_cell_format() {
+    let mut s = Session::new();
+    s.new_workbook();
+    s.execute("home.numberFormat", json!({"range": "A1:A3", "code": "dd.mm.yyyy"})).unwrap();
+    s.execute("home.numberFormat", json!({"range": "B1", "code": "mm/dd/yyyy"})).unwrap();
+    for (cell, input) in [("A1", "30.12.2000"), ("A2", "10.11.2026"), ("A3", "5/4/2026"), ("B1", "10.11.2026"), ("C1", "10.11.2026")] {
+        s.execute("cell.set", json!({"cell": cell, "input": input})).unwrap();
+    }
+    let get = |s: &mut Session, a: &str| s.execute("cell.get", json!({"cell": a})).unwrap();
+    assert_eq!(get(&mut s, "A1")["text"], "30.12.2000");
+    assert_eq!(get(&mut s, "A2")["text"], "10.11.2026");
+    assert_eq!(get(&mut s, "A3")["text"], "05.04.2026");
+    // Month-first and General cells keep the en-US reading.
+    assert_eq!(get(&mut s, "B1")["text"], "10/11/2026");
+    assert_eq!(get(&mut s, "C1")["text"], "10/11/2026");
+}
