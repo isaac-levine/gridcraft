@@ -167,6 +167,11 @@ fn securities() {
     close_tol(ev("RECEIVED", vec![d(2008, 2, 15), d(2008, 5, 15), n(1000000.0), n(0.0575), n(2.0)]), 1014584.654, 1e-9);
     is_err(ev("DISC", vec![d(2008, 2, 15), d(2008, 1, 15), n(97.0), n(100.0)]), CellError::Num);
     close_tol(ev("TBILLPRICE", vec![d(2008, 3, 31), d(2008, 6, 1), n(0.09)]), 98.45, 1e-12);
+    // A discount that takes the price exactly to zero is accepted, past it is #NUM!.
+    close_tol(ev("TBILLPRICE", vec![d(2023, 1, 1), d(2023, 6, 30), n(2.0)]), 0.0, 1e-12);
+    close_tol(ev("TBILLEQ", vec![d(2023, 1, 1), d(2023, 6, 30), n(2.0)]), 0.0, 1e-12);
+    is_err(ev("TBILLPRICE", vec![d(2023, 1, 1), d(2023, 7, 2), n(2.0)]), CellError::Num);
+    is_err(ev("TBILLEQ", vec![d(2023, 1, 1), d(2023, 7, 2), n(2.0)]), CellError::Num);
     close_tol(ev("TBILLYIELD", vec![d(2008, 3, 31), d(2008, 6, 1), n(98.45)]), 0.091417, 1e-6);
     close_tol(ev("TBILLEQ", vec![d(2008, 3, 31), d(2008, 6, 1), n(0.0914)]), 0.094151, 1e-6);
     is_err(ev("TBILLPRICE", vec![d(2008, 3, 31), d(2009, 6, 1), n(0.09)]), CellError::Num);

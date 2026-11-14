@@ -136,7 +136,8 @@ fn tbill_args(a: &[Arg], sys: DateSystem) -> R<(f64, f64)> {
 pub(super) fn tbillprice(a: &[Arg], c: &mut dyn Ctx) -> R<Value> {
     let (dsm, d) = tbill_args(a, c.date_system())?;
     let p = 100.0 * (1.0 - d * dsm / 360.0);
-    if p <= 0.0 {
+    // Excel accepts a discount that takes the price exactly to zero.
+    if p < 0.0 {
         return Err(CellError::Num);
     }
     num_val(p)
@@ -149,12 +150,16 @@ pub(super) fn tbillyield(a: &[Arg], c: &mut dyn Ctx) -> R<Value> {
 
 pub(super) fn tbilleq(a: &[Arg], c: &mut dyn Ctx) -> R<Value> {
     let (dsm, d) = tbill_args(a, c.date_system())?;
+    let price = 100.0 * (1.0 - d * dsm / 360.0);
+    // A discount past 100% is rejected, exactly 100% gives zero like Excel.
+    if price < 0.0 {
+        return Err(CellError::Num);
+    }
+    if price == 0.0 {
+        return num_val(0.0);
+    }
     if dsm <= 182.0 {
         return num_val(365.0 * d / (360.0 - d * dsm));
-    }
-    let price = 100.0 * (1.0 - d * dsm / 360.0);
-    if price <= 0.0 {
-        return Err(CellError::Num);
     }
     let t = dsm / 365.0;
     let disc = t * t - (2.0 * t - 1.0) * (1.0 - 100.0 / price);
