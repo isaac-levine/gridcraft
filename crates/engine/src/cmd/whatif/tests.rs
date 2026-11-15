@@ -219,6 +219,30 @@ fn advanced_filter_copy_preserves_cells_beyond_result() {
 }
 
 #[test]
+fn advanced_filter_repeat_extract_clears_stale_rows() {
+    let mut s = s();
+    s.execute("range.setValues", json!({"range": "A1", "values": [["Region", "Sales"], ["East", 50], ["West", 150], ["East", 200]]})).unwrap();
+    s.execute("range.setValues", json!({"range": "H1", "values": [["Region"], [null]]})).unwrap();
+    s.execute("cell.set", json!({"cell": "N1", "input": "=COUNTA(K2:K10)"})).unwrap();
+    s.execute("cell.set", json!({"cell": "K9", "input": "Keep me"})).unwrap();
+    let run = |s: &mut Session| s.execute("data.advancedFilter", json!({"range": "A1:B4", "criteria": "H1:H2", "copyTo": "K1"})).unwrap();
+    assert_eq!(run(&mut s)["matched"], 3);
+    assert_eq!(n(&s, "N1"), 4.0);
+    s.execute("cell.set", json!({"cell": "H2", "input": "West"})).unwrap();
+    assert_eq!(run(&mut s)["matched"], 1);
+    assert_eq!(v(&s, "K2"), Value::from("West"));
+    assert_eq!(v(&s, "K3"), Value::Empty);
+    assert_eq!(v(&s, "K4"), Value::Empty);
+    assert_eq!(v(&s, "L4"), Value::Empty);
+    assert_eq!(v(&s, "K9"), Value::from("Keep me"));
+    assert_eq!(n(&s, "N1"), 2.0);
+    s.execute("cell.set", json!({"cell": "H2", "input": "Nowhere"})).unwrap();
+    assert_eq!(run(&mut s)["matched"], 0);
+    assert_eq!(v(&s, "K2"), Value::Empty);
+    assert_eq!(n(&s, "N1"), 1.0);
+}
+
+#[test]
 fn advanced_filter_copy_rejects_overflow_without_mutation() {
     let mut s = s();
     s.execute("range.setValues", json!({"range": "A1", "values": [["Name", "Score"], ["A", 1]]})).unwrap();

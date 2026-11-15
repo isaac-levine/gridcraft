@@ -199,7 +199,20 @@ pub(super) fn advanced_filter(s: &mut Session, p: &Json) -> Result<Json> {
             .collect();
         edit(s, |cx| {
             let shm = cx.sheet_mut(dsi)?;
-            let old: Vec<CellRef> = shm.cells.iter_range(out_range).map(|(c, _)| c).collect();
+            let mut old: Vec<CellRef> = shm.cells.iter_range(out_range).map(|(c, _)| c).collect();
+            // A repeated extract with fewer matches must not leave the previous
+            // result's tail behind. We don't record earlier extracts, so clear the
+            // unbroken run of filled rows right under the new output. A blank row
+            // ends it, which keeps unrelated cells further down (#1031).
+            let mut row = end.row.saturating_add(1);
+            while row < gridcraft_core::addr::MAX_ROWS {
+                let used: Vec<CellRef> = (dest.col..=end.col).map(|c| CellRef::new(row, c)).filter(|at| shm.cell(*at).is_some()).collect();
+                if used.is_empty() {
+                    break;
+                }
+                old.extend(used);
+                row += 1;
+            }
             for c in &old {
                 shm.remove_cell(*c);
             }
