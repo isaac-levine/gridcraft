@@ -7,7 +7,7 @@ use std::collections::HashMap;
 use std::sync::Arc;
 
 use craft_csv::sylk;
-use gridcraft_core::{CellError, CellRef, Value};
+use gridcraft_core::{CellError, CellRef, DateSystem, Value};
 use gridcraft_model::{Cell, Formula, NumFmt, Sheet, Style, Workbook};
 
 use crate::{EngineError, Result};
@@ -19,6 +19,9 @@ pub fn read(name: &str, bytes: &[u8]) -> Result<(Workbook, Vec<String>)> {
         _ => EngineError::Other(format!("We can't open '{name}': it isn't a SYLK file (it doesn't start with an ID record).")),
     })?;
     let mut wb = Workbook::new();
+    if uses_1904(bytes) {
+        wb.date_system = DateSystem::D1904;
+    }
     let mut sheet = Sheet::new("Sheet1");
     let mut skipped = file.skipped;
     let mut styles = HashMap::new();
@@ -61,4 +64,14 @@ pub fn read(name: &str, bytes: &[u8]) -> Result<(Workbook, Vec<String>)> {
         warnings.push(format!("{name}: {skipped} SYLK records GridCraft couldn't read were skipped"));
     }
     Ok((wb, warnings))
+}
+
+/// True when the file's `O` (options) record carries `V4`, the 1904 date system. `craft_csv` doesn't
+/// surface the options record, and without this the serials are read against the 1900 calendar and
+/// every date lands 1,462 days early. Only the record's own fields are looked at, never cell text.
+fn uses_1904(bytes: &[u8]) -> bool {
+    bytes
+        .split(|&b| b == b'\n' || b == b'\r')
+        .filter(|line| line.starts_with(b"O;"))
+        .any(|line| line.split(|&b| b == b';').skip(1).any(|field| field == b"V4"))
 }

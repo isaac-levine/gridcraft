@@ -745,6 +745,24 @@ fn sylk_files_open_with_values_formulas_formats_and_widths() {
     assert_eq!(sh.cols.get(&3).and_then(|i| i.size), None, "column D keeps the default width");
 }
 
+/// An options record with `V4` is the 1904 date system, so the same serial is the same date as in
+/// the source (#4360). `V0`, a missing record and a cell text that merely contains the record
+/// stay on the 1900 calendar.
+#[test]
+fn sylk_1904_flag_selects_the_1904_date_system() {
+    let file = |options: &str| format!("ID;PTEST;N;E\r\n{options}P;Pyyyy\\-mm\\-dd\r\nF;P0;FG0G;Y1;X1\r\nC;Y1;X1;K42428.5\r\nE\r\n");
+    let system = |options: &str| open_bytes("d.slk", file(options).as_bytes()).unwrap().0.date_system;
+    assert_eq!(system("O;L;D;V4;K47;G100 0.001\r\n"), gridcraft_core::DateSystem::D1904);
+    assert_eq!(system("O;L;D;V0;K47;G100 0.001\r\n"), gridcraft_core::DateSystem::D1900);
+    assert_eq!(system(""), gridcraft_core::DateSystem::D1900);
+    let quoted = "ID;PTEST;N;E\r\nC;Y1;X1;K\"O;V4\"\r\nE\r\n";
+    assert_eq!(open_bytes("d.slk", quoted.as_bytes()).unwrap().0.date_system, gridcraft_core::DateSystem::D1900);
+    // The serial is kept as written, and now reads as the date Excel showed.
+    let (wb, _) = open_bytes("d.slk", file("O;L;D;V4\r\n").as_bytes()).unwrap();
+    let sh = wb.sheet(0).unwrap();
+    assert_eq!(sh.value(CellRef::parse("A1").unwrap()), gridcraft_core::Value::Number(42428.5));
+}
+
 #[test]
 fn sylk_r1c1_formulas_become_a1() {
     let b2 = CellRef::parse("B2").unwrap();
