@@ -583,6 +583,9 @@ pub fn csv_values_bytes(wb: &Workbook) -> Result<Vec<u8>> {
         gridcraft_core::Value::Number(n) if n.is_finite() => {
             let shape = crate::display::parsed(wb.styles.get(sh.style_id(c)).num_fmt.as_str()).date_shape(n);
             match shape.zip(gridcraft_core::date::datetime_from_serial(wb.date_system, n)) {
+                // Excel's fictitious 1900-02-29 (serial 60) and day 0 have no ISO 8601 date, so
+                // those cells keep their serial instead of an invalid date.
+                Some(((date, _), d)) if date && !is_iso_date(&d) => n.to_string(),
                 Some(((date, time), d)) => iso(&d, date, time),
                 None => n.to_string(),
             }
@@ -591,6 +594,11 @@ pub fn csv_values_bytes(wb: &Workbook) -> Result<Vec<u8>> {
         v => crate::display::value_text_as(wb, &v, "General"),
     })
     .map_err(|e| EngineError::Other(e.to_string()))
+}
+
+/// False for the serials Excel's 1900 calendar invents: day 0 and February 29, 1900.
+fn is_iso_date(d: &gridcraft_core::date::DateTime) -> bool {
+    d.day != 0 && !(d.year == 1900 && d.month == 2 && d.day == 29)
 }
 
 /// `date` and `time` say which parts the cell's format shows; a format with neither is not a date.

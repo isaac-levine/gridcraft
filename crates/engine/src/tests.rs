@@ -2880,6 +2880,27 @@ fn export_csv_values_writes_raw_values_and_the_default_stays_displayed_text() {
     std::fs::remove_dir_all(dir).unwrap();
 }
 
+/// Serials 0 and 60 are Excel's invented 1900 dates (day 0, February 29): the raw CSV keeps the
+/// number there, since ISO 8601 has no such date. A time-only format at serial 0 is still a time.
+#[test]
+#[cfg(not(target_arch = "wasm32"))]
+fn export_csv_values_keeps_serials_without_an_iso_date() {
+    let mut s = s();
+    for (cell, input, code) in
+        [("A1", "60", "yyyy-mm-dd"), ("B1", "0", "yyyy-mm-dd"), ("C1", "61", "yyyy-mm-dd"), ("D1", "60.5", "yyyy-mm-dd hh:mm"), ("E1", "0.5", "h:mm")]
+    {
+        s.execute("cell.set", json!({"cell": cell, "input": input})).unwrap();
+        s.execute("home.numberFormat", json!({"range": cell, "code": code})).unwrap();
+    }
+    #[allow(clippy::disallowed_methods)] // native-only test: a unique temp dir name
+    let nonce = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos();
+    let path = std::env::temp_dir().join(format!("gridcraft-csv-serials-{}-{nonce}.csv", std::process::id()));
+    s.execute("file.exportCsv", json!({"path": path, "values": true})).unwrap();
+    let text = std::fs::read_to_string(&path).unwrap();
+    std::fs::remove_file(&path).unwrap();
+    assert_eq!(text, "60,0,1900-03-01,60.5,12:00:00\r\n");
+}
+
 /// A workbook whose B1 is `=[1]Sheet1!A1`, linked to `link` (an external relationship target).
 fn linked_workbook(link: &str) -> Vec<u8> {
     use std::io::{Cursor, Write};
