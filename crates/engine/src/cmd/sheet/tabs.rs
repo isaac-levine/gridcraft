@@ -42,7 +42,8 @@ pub(super) fn delete_sheet(s: &mut Session, p: &Json) -> Result<Json> {
     if d.wb.protected_structure {
         return Err(EngineError::Other("The workbook is protected and cannot be changed.".into()));
     }
-    if d.wb.sheets.iter().filter(|s| s.visibility == Visibility::Visible).count() <= 1 {
+    // Something visible must survive. Deleting a hidden sheet never removes the last visible one.
+    if d.wb.sheets.iter().enumerate().filter(|(si, s)| *si != i && s.visibility == Visibility::Visible).count() == 0 {
         return Err(EngineError::Other("A workbook must contain at least one visible worksheet.".into()));
     }
     let name = d.wb.sheet(i).map(|s| s.name.clone()).unwrap_or_default();

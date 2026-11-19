@@ -7121,3 +7121,22 @@ fn history_charges_the_storage_of_empty_comment_replies() {
     // 500 replies of no text are still 500 elements.
     assert!(crate::sheet_text_bytes(&sheet) >= 500 * std::mem::size_of::<(String, String)>());
 }
+
+#[test]
+fn deleting_a_hidden_sheet_keeps_the_visible_one() {
+    for visibility in [gridcraft_model::Visibility::Hidden, gridcraft_model::Visibility::VeryHidden] {
+        let mut session = s();
+        session.execute("home.insertSheet", json!({"name": "Hidden"})).unwrap();
+        std::sync::Arc::make_mut(&mut session.doc_mut().unwrap().wb).sheet_mut(1).unwrap().visibility = visibility;
+        session.execute("home.deleteSheet", json!({"sheet": "Hidden"})).unwrap();
+        let wb = &session.doc().unwrap().wb;
+        assert_eq!(wb.sheets.len(), 1);
+        assert_eq!(wb.sheets[0].visibility, gridcraft_model::Visibility::Visible);
+        // The last visible sheet still can't go, hidden sheets or not.
+        session.execute("home.insertSheet", json!({"name": "Hidden"})).unwrap();
+        std::sync::Arc::make_mut(&mut session.doc_mut().unwrap().wb).sheet_mut(1).unwrap().visibility = visibility;
+        let first = session.doc().unwrap().wb.sheets[0].name.clone();
+        assert!(session.execute("home.deleteSheet", json!({"sheet": first})).is_err());
+        assert_eq!(session.doc().unwrap().wb.sheets.len(), 2);
+    }
+}
