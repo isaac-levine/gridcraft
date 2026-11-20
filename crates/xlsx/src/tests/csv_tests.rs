@@ -432,3 +432,12 @@ fn csv_used_range_limit_is_enforced_while_reading() {
     // No limit by default.
     assert!(read_csv(dense, &CsvOptions::default()).is_ok());
 }
+
+#[test]
+fn no_break_space_padding_keeps_a_numeric_looking_field_as_text() {
+    let src = " 42 ,\u{a0}42\u{a0},\"\u{202f}42\u{202f}\"\n";
+    let wb = read_csv(src.as_bytes(), &CsvOptions::default()).unwrap();
+    assert_eq!(v(&wb, 0, 0), Value::Number(42.0));
+    assert_eq!(v(&wb, 0, 1), Value::text("\u{a0}42\u{a0}"));
+    assert_eq!(v(&wb, 0, 2), Value::text("\u{202f}42\u{202f}"));
+}

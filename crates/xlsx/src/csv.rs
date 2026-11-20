@@ -237,8 +237,17 @@ fn date_warnings(columns: &[(DateRule, DateEvidence)], report: &mut ReadReport) 
     }
 }
 
+fn is_no_break_space(c: char) -> bool {
+    matches!(c, '\u{a0}' | '\u{202f}')
+}
+
 /// Reads one field with the column's date rule; other values go through typed input.
 fn read_field(field: &str, sys: DateSystem, rule: DateRule) -> Parsed {
+    // Typed input trims every Unicode space, so `\u{a0}42\u{a0}` would turn into the number 42 and
+    // lose the padding. Excel keeps such a field as text, and only ordinary spaces are trimmed.
+    if field.starts_with(is_no_break_space) || field.ends_with(is_no_break_space) {
+        return Parsed { value: Value::text(field), format: None };
+    }
     match numeric_date(field, sys) {
         Some(date) if rule != DateRule::NoDates => date.read(field, rule),
         _ => parse_input(field, sys),
